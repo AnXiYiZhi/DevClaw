@@ -393,6 +393,7 @@ pub fn install_tool(tool: String) -> (bool, String) {
 }
 
 /// 调试命令
+#[cfg(target_os = "windows")]
 #[tauri::command]
 pub fn debug_env() -> String {
     let mut out = String::new();
@@ -499,4 +500,11 @@ pub fn debug_env() -> String {
 
     log_line("=== debug_env 结束 ===", "");
     out
+}
+
+/// 调试命令
+#[cfg(not(target_os = "windows"))]
+#[tauri::command]
+pub fn debug_env() -> String {
+    "debug_env: 仅支持 Windows 平台".to_string()
 }
