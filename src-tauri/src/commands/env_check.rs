@@ -647,6 +647,7 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                 ("rm vscode dir",   vec!["__rm_dir__", r"__LOCALAPPDATA__\Programs\Microsoft VS Code"]),
             ],
             "chrome" => vec![
+                ("kill chrome",     vec!["cmd", "/C", "taskkill", "/F", "/IM", "chrome.exe"]),
                 ("winget chrome",   vec!["cmd", "/C", "winget", "uninstall", "Google.Chrome", "--silent"]),
                 ("rm chrome dir",   vec!["__rm_dir__", r"__LOCALAPPDATA__\Google\Chrome"]),
             ],
