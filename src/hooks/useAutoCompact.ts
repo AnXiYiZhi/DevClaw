@@ -13,8 +13,14 @@ export function useAutoCompact(
   containerRef: RefObject<HTMLDivElement | null>,
 ): boolean {
   const [compact, setCompact] = useState(false);
+  const compactRef = useRef(false);
   const normalWidthRef = useRef(0);
   const lockUntilRef = useRef(0);
+
+  // Keep ref in sync with state so the observer callback always reads latest
+  useEffect(() => {
+    compactRef.current = compact;
+  }, [compact]);
 
   useEffect(() => {
     const el = containerRef.current;
@@ -24,7 +30,7 @@ export function useAutoCompact(
       // During expand animation, ignore resize events to prevent flicker
       if (Date.now() < lockUntilRef.current) return;
 
-      if (!compact) {
+      if (!compactRef.current) {
         // Overflow detected → switch to compact
         if (el.scrollWidth > el.clientWidth + 1) {
           // Cache only at the overflow edge: when content fits,
@@ -46,7 +52,8 @@ export function useAutoCompact(
     });
     ro.observe(el);
     return () => ro.disconnect();
-  }, [compact]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   return compact;
 }
