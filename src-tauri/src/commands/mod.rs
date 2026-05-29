@@ -8,7 +8,7 @@ mod config;
 mod copilot;
 mod deeplink;
 mod env;
-mod env_check;
+pub mod env_check;
 mod failover;
 mod global_proxy;
 mod hermes;

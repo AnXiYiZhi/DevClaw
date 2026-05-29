@@ -468,7 +468,7 @@ fn get_install_log_path() -> std::path::PathBuf {
     dir.join("install.log")
 }
 
-/// 追加一条安装日志
+/// 追加一条安装日志（同时写入旧路径和新路径）
 fn append_install_log(tool: &str, success: bool, msg: &str) {
     use std::io::Write;
     let path = get_install_log_path();
@@ -478,6 +478,8 @@ fn append_install_log(tool: &str, success: bool, msg: &str) {
     if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
         let _ = f.write_all(line.as_bytes());
     }
+    // 同时写入新的统一日志目录
+    write_install_log(tool, success, msg);
 }
 
 /// 读取安装日志
@@ -505,10 +507,67 @@ fn remove_dir_silent(p: &str) -> bool {
     }
 }
 
-/// 使用 winget/npm 安装工具（先彻底卸载再安装，带进度事件）
-/// 进度：0-30% 卸载阶段，30-100% 安装阶段
+/// 检测 node 是否由 nvm 管理（Windows）
+#[cfg(target_os = "windows")]
+fn is_node_managed_by_nvm() -> bool {
+    which::which("node")
+        .map(|p| {
+            let path_str = p.to_string_lossy().to_lowercase();
+            path_str.contains("nvm")
+        })
+        .unwrap_or(false)
+}
+
+/// 检测 node 是否由 nvm 管理（macOS/Linux）
+#[cfg(not(target_os = "windows"))]
+fn is_node_managed_by_nvm() -> bool {
+    which::which("node")
+        .map(|p| {
+            let path_str = p.to_string_lossy().to_lowercase();
+            path_str.contains(".nvm") || path_str.contains("nvm")
+        })
+        .unwrap_or(false)
+}
+
+/// 检测 node 是否由 brew 管理（仅 macOS 有意义）
+#[cfg(not(target_os = "windows"))]
+fn is_node_managed_by_brew() -> bool {
+    #[cfg(target_os = "macos")]
+    {
+        which::which("node")
+            .map(|p| {
+                let path_str = p.to_string_lossy();
+                path_str.starts_with("/opt/homebrew/") || path_str.starts_with("/usr/local/Cellar/")
+                    || path_str.starts_with("/usr/local/opt/")
+            })
+            .unwrap_or(false)
+    }
+    #[cfg(not(target_os = "macos"))]
+    {
+        false
+    }
+}
+
+/// 使用 winget/npm 安装工具（带进度事件）
+/// uninstall_first=true: 先卸载再安装（重装场景）
+/// uninstall_first=false: 直接安装（首次安装场景）
+/// 进度：0-30% 卸载阶段（仅 uninstall_first=true），30-100% 安装阶段
 #[tauri::command]
-pub fn install_tool(tool: String, window: tauri::Window) -> (bool, String) {
+pub async fn install_tool(tool: String, uninstall_first: bool, window: tauri::Window) -> (bool, String) {
+    append_install_log(&tool, true, &format!("开始安装 (uninstall_first={})", uninstall_first));
+
+    let result = tauri::async_runtime::spawn_blocking({
+        let tool = tool.clone();
+        let window = window.clone();
+        move || install_tool_inner(tool, uninstall_first, window)
+    })
+    .await
+    .unwrap_or_else(|e| (false, format!("安装线程异常: {}", e)));
+
+    result
+}
+
+fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window) -> (bool, String) {
     let path = get_shell_path();
 
     #[cfg(target_os = "windows")]
@@ -518,7 +577,6 @@ pub fn install_tool(tool: String, window: tauri::Window) -> (bool, String) {
         use std::sync::{Arc, Mutex};
         use std::time::Duration;
 
-        // ── 卸载阶段 (0% → 30%) ──────────────────────────────────────────
         let emit = |pct: u32| {
             let _ = window.emit("install_progress", serde_json::json!({
                 "tool": &tool, "progress": pct, "done": false
@@ -530,15 +588,25 @@ pub fn install_tool(tool: String, window: tauri::Window) -> (bool, String) {
             run_cmd_silent(args[0], &args[1..], &path)
         };
 
-        let uninstall_steps: Vec<(&str, Vec<&str>)> = match tool.as_str() {
-            "nodejs" | "npm" => vec![
-                ("winget node",   vec!["cmd", "/C", "winget", "uninstall", "OpenJS.NodeJS", "--silent"]),
-                ("winget node lts",vec!["cmd", "/C", "winget", "uninstall", "OpenJS.NodeJS.LTS", "--silent"]),
-                ("nvm uninstall", vec!["cmd", "/C", "nvm", "uninstall", "current"]),
-                ("rm nodejs dir", vec!["__rm_dir__", r"C:\Program Files\nodejs"]),
-                ("rm npm",        vec!["__rm_dir__", r"__APPDATA__\npm"]),
-                ("rm npm-cache",  vec!["__rm_dir__", r"__APPDATA__\npm-cache"]),
-            ],
+        // ── 卸载阶段 (0% → 30%)，仅 uninstall_first=true ────────────────
+        if uninstall_first {
+            let uninstall_steps: Vec<(&str, Vec<&str>)> = match tool.as_str() {
+                "nodejs" | "npm" => {
+                    let mut steps = Vec::new();
+                    if is_node_managed_by_nvm() {
+                        // nvm 管理的 node：用 nvm uninstall 卸载当前版本
+                        log::info!("[uninstall] 检测到 nvm 管理的 node，使用 nvm uninstall");
+                        steps.push(("nvm uninstall current", vec!["cmd", "/C", "nvm", "uninstall", "current"]));
+                    } else {
+                        // 非 nvm 管理：用 winget 卸载
+                        steps.push(("winget node",   vec!["cmd", "/C", "winget", "uninstall", "OpenJS.NodeJS", "--silent"]));
+                        steps.push(("winget node lts",vec!["cmd", "/C", "winget", "uninstall", "OpenJS.NodeJS.LTS", "--silent"]));
+                    }
+                    steps.push(("rm nodejs dir", vec!["__rm_dir__", r"C:\Program Files\nodejs"]));
+                    steps.push(("rm npm",        vec!["__rm_dir__", r"__APPDATA__\npm"]));
+                    steps.push(("rm npm-cache",  vec!["__rm_dir__", r"__APPDATA__\npm-cache"]));
+                    steps
+                }
             "python" => vec![
                 ("winget python",   vec!["cmd", "/C", "winget", "uninstall", "Python.Python.3", "--silent"]),
                 ("winget python313",vec!["cmd", "/C", "winget", "uninstall", "Python.Python.3.13", "--silent"]),
@@ -586,6 +654,7 @@ pub fn install_tool(tool: String, window: tauri::Window) -> (bool, String) {
 
         // 卸载完成后等待 2 秒
         std::thread::sleep(Duration::from_secs(2));
+        } // end if uninstall_first
 
         // ── 安装阶段 (30% → 100%) ────────────────────────────────────────
         let full_cmd = match tool.as_str() {
@@ -703,19 +772,32 @@ pub fn install_tool(tool: String, window: tauri::Window) -> (bool, String) {
 
         let home = std::env::var("HOME").unwrap_or_default();
 
+        // ── 卸载阶段 (0% → 30%)，仅 uninstall_first=true ────────────────
+        if uninstall_first {
         // 类型: ("__cmd__", cmd) 执行 shell 命令 | ("__rm__", path) 删除目录
         let uninstall_steps: Vec<(&str, &str)> = match tool.as_str() {
-            "nodejs" | "npm" => vec![
-                ("__cmd__", "brew uninstall node 2>/dev/null"),
-                ("__cmd__", "brew uninstall node@22 2>/dev/null; brew uninstall node@20 2>/dev/null; brew uninstall node@18 2>/dev/null"),
-                ("__cmd__", "test -s ~/.nvm/nvm.sh && . ~/.nvm/nvm.sh 2>/dev/null && nvm uninstall $(nvm current) 2>/dev/null || true"),
-                ("__rm__",  "/usr/local/bin/node"),
-                ("__rm__",  "/opt/homebrew/bin/node"),
-                ("__rm__",  "/usr/local/bin/npm"),
-                ("__rm__",  "/opt/homebrew/bin/npm"),
-                ("__rm_h__", "~/.npm"),
-                ("__rm_h__", "~/.npm-cache"),
-            ],
+            "nodejs" | "npm" => {
+                let mut steps = Vec::new();
+                if is_node_managed_by_nvm() {
+                    log::info!("[uninstall] 检测到 nvm 管理的 node，使用 nvm uninstall");
+                    steps.push(("__cmd__", "test -s ~/.nvm/nvm.sh && . ~/.nvm/nvm.sh 2>/dev/null && nvm uninstall $(nvm current) 2>/dev/null || true"));
+                } else if is_node_managed_by_brew() {
+                    log::info!("[uninstall] 检测到 brew 管理的 node，使用 brew uninstall");
+                    steps.push(("__cmd__", "brew uninstall node 2>/dev/null"));
+                    steps.push(("__cmd__", "brew uninstall node@22 2>/dev/null; brew uninstall node@20 2>/dev/null; brew uninstall node@18 2>/dev/null"));
+                } else {
+                    // 都不是，尝试全部
+                    steps.push(("__cmd__", "brew uninstall node 2>/dev/null"));
+                    steps.push(("__cmd__", "test -s ~/.nvm/nvm.sh && . ~/.nvm/nvm.sh 2>/dev/null && nvm uninstall $(nvm current) 2>/dev/null || true"));
+                }
+                steps.push(("__rm__",  "/usr/local/bin/node"));
+                steps.push(("__rm__",  "/opt/homebrew/bin/node"));
+                steps.push(("__rm__",  "/usr/local/bin/npm"));
+                steps.push(("__rm__",  "/opt/homebrew/bin/npm"));
+                steps.push(("__rm_h__", "~/.npm"));
+                steps.push(("__rm_h__", "~/.npm-cache"));
+                steps
+            },
             "python" => vec![
                 ("__cmd__", "brew uninstall python 2>/dev/null"),
                 ("__cmd__", "brew uninstall python3 2>/dev/null"),
@@ -769,6 +851,7 @@ pub fn install_tool(tool: String, window: tauri::Window) -> (bool, String) {
         }
 
         std::thread::sleep(Duration::from_secs(2));
+        } // end if uninstall_first
 
         // ── 安装阶段 (30% → 100%) ────────────────────────────────────────
         emit(35);
@@ -798,6 +881,64 @@ pub fn install_tool(tool: String, window: tauri::Window) -> (bool, String) {
 
         (success, msg)
     }
+}
+
+// ── 日志模块 ──────────────────────────────────────────────────────
+
+use std::sync::OnceLock;
+
+static LOGS_DIR: OnceLock<Option<std::path::PathBuf>> = OnceLock::new();
+
+/// 获取日志目录路径（app_data_dir/logs/）
+fn get_logs_dir() -> Option<&'static std::path::PathBuf> {
+    LOGS_DIR
+        .get_or_init(|| {
+            let dir = dirs::data_local_dir()
+                .unwrap_or_else(|| std::path::PathBuf::from("."))
+                .join("DevClaw")
+                .join("logs");
+            if let Err(e) = std::fs::create_dir_all(&dir) {
+                eprintln!("[env_log] 创建日志目录失败: {}", e);
+                return None;
+            }
+            Some(dir)
+        })
+        .as_ref()
+}
+
+/// 初始化日志目录（应在应用启动时调用）
+pub fn init_log_dir() {
+    let _ = get_logs_dir();
+}
+
+/// 写入一行日志到指定文件（追加模式）
+fn write_log_file(filename: &str, line: &str) {
+    if let Some(dir) = get_logs_dir() {
+        let path = dir.join(filename);
+        use std::io::Write;
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&path)
+        {
+            let _ = f.write_all(line.as_bytes());
+        }
+    }
+}
+
+/// 写入 debug 日志（debug.log，追加模式，不覆盖）
+pub fn write_debug_log(level: &str, msg: &str) {
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let line = format!("[{}] [{}] {}\n", now, level, msg);
+    write_log_file("debug.log", &line);
+}
+
+/// 写入安装日志（install.log，每次安装追加，带时间戳和工具名）
+pub fn write_install_log(tool: &str, success: bool, msg: &str) {
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let status = if success { "成功" } else { "失败" };
+    let line = format!("[{}] [INSTALL] {} - {} {}\n", now, tool, status, msg);
+    write_log_file("install.log", &line);
 }
 
 /// 调试命令
