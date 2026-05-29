@@ -1,5 +1,8 @@
 use std::collections::HashMap;
 use std::process::Command;
+use tauri::Emitter;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 
 /// 获取 shell 的完整 PATH
 fn get_shell_path() -> String {
@@ -51,7 +54,9 @@ fn get_command_output(cmd: &str, args: &[&str]) -> Option<String> {
             .chain(args.iter().copied())
             .collect::<Vec<_>>()
             .join(" ");
-        let result = Command::new("cmd")
+        let mut c = Command::new("cmd");
+        c.creation_flags(0x08000000);
+        let result = c
             .args(["/C", &full_cmd])
             .env("PATH", &path)
             .output()
@@ -98,7 +103,10 @@ fn get_command_output(cmd: &str, args: &[&str]) -> Option<String> {
 fn get_command_output_at(exe_path: &str, args: &[&str]) -> Option<String> {
     let path = get_shell_path();
     log::debug!("[env_check] 执行(完整路径): {} {:?}", exe_path, args);
-    let result = Command::new(exe_path)
+    let mut c = Command::new(exe_path);
+    #[cfg(target_os = "windows")]
+    c.creation_flags(0x08000000);
+    let result = c
         .args(args)
         .env("PATH", &path)
         .output()
@@ -132,11 +140,10 @@ fn detect_python() -> Option<String> {
 /// Git 版本检测
 fn detect_git() -> Option<String> {
     get_command_output("git", &["--version"]).map(|s| {
-        s.replace("git version ", "")
-            .split_whitespace()
-            .next()
-            .unwrap_or("")
-            .to_string()
+        let ver = s.replace("git version ", "");
+        let short = ver.split_whitespace().next().unwrap_or("");
+        // "2.53.0.windows.2" → "2.53.0"
+        short.split('.').take(3).collect::<Vec<_>>().join(".")
     })
 }
 
@@ -161,7 +168,9 @@ fn detect_vscode() -> Option<String> {
                 log::debug!("[env_check] VS Code 固定路径: {}", code_cmd);
                 // 通过 cmd /C 执行 .cmd 文件
                 let path = get_shell_path();
-                let result = Command::new("cmd")
+                let mut c = Command::new("cmd");
+                c.creation_flags(0x08000000);
+                let result = c
                     .args(["/C", &code_cmd, "--version"])
                     .env("PATH", &path)
                     .output()
@@ -284,6 +293,7 @@ fn detect_chrome() -> Option<String> {
 /// Claude CLI 检测（可能是 .exe 或 .cmd，通过 cmd /C 执行）
 fn detect_claude() -> Option<String> {
     get_command_output("claude", &["--version"])
+        .map(|s| s.split_whitespace().next().unwrap_or(&s).to_string())
 }
 
 /// 检测所有环境工具的版本
@@ -326,13 +336,181 @@ pub fn check_npm_available() -> bool {
     get_command_output("npm", &["config", "get", "registry"]).is_some()
 }
 
-/// 使用 winget/npm 安装工具
+/// 修复 npm registry
 #[tauri::command]
-pub fn install_tool(tool: String) -> (bool, String) {
+pub fn fix_npm_registry() -> (bool, String) {
     let path = get_shell_path();
 
     #[cfg(target_os = "windows")]
     {
+        let mut c = Command::new("cmd");
+        c.creation_flags(0x08000000);
+        match c
+            .args(["/C", "npm", "config", "set", "registry", "https://registry.npmjs.org"])
+            .env("PATH", &path)
+            .output()
+        {
+            Ok(output) => {
+                if output.status.success() {
+                    (true, "已修复 npm registry".to_string())
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    (false, format!("修复失败: {}", stderr))
+                }
+            }
+            Err(e) => (false, format!("执行命令失败: {}", e)),
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        match Command::new("npm")
+            .args(["config", "set", "registry", "https://registry.npmjs.org"])
+            .env("PATH", &path)
+            .output()
+        {
+            Ok(output) => {
+                if output.status.success() {
+                    (true, "已修复 npm registry".to_string())
+                } else {
+                    let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+                    (false, format!("修复失败: {}", stderr))
+                }
+            }
+            Err(e) => (false, format!("执行命令失败: {}", e)),
+        }
+    }
+}
+
+/// 获取安装日志文件路径
+fn get_install_log_path() -> std::path::PathBuf {
+    let dir = dirs::data_local_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("DevClaw");
+    std::fs::create_dir_all(&dir).ok();
+    dir.join("install.log")
+}
+
+/// 追加一条安装日志
+fn append_install_log(tool: &str, success: bool, msg: &str) {
+    use std::io::Write;
+    let path = get_install_log_path();
+    let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+    let status = if success { "成功" } else { "失败" };
+    let line = format!("[{}] {} - {} {}\n", now, tool, status, msg);
+    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+        let _ = f.write_all(line.as_bytes());
+    }
+}
+
+/// 读取安装日志
+#[tauri::command]
+pub fn read_install_log() -> String {
+    let path = get_install_log_path();
+    std::fs::read_to_string(&path).unwrap_or_else(|_| "暂无安装日志".to_string())
+}
+
+/// 静默执行一条命令（失败不中断）
+fn run_cmd_silent(exe: &str, args: &[&str], path: &str) -> bool {
+    let mut c = Command::new(exe);
+    #[cfg(target_os = "windows")]
+    c.creation_flags(0x08000000);
+    c.args(args).env("PATH", path).output().map(|o| o.status.success()).unwrap_or(false)
+}
+
+/// 静默删除目录（失败不中断）
+fn remove_dir_silent(p: &str) -> bool {
+    let path = std::path::Path::new(p);
+    if path.exists() {
+        std::fs::remove_dir_all(path).is_ok()
+    } else {
+        true
+    }
+}
+
+/// 使用 winget/npm 安装工具（先彻底卸载再安装，带进度事件）
+/// 进度：0-30% 卸载阶段，30-100% 安装阶段
+#[tauri::command]
+pub fn install_tool(tool: String, window: tauri::Window) -> (bool, String) {
+    let path = get_shell_path();
+
+    #[cfg(target_os = "windows")]
+    {
+        use std::io::{BufRead, BufReader};
+        use std::process::Stdio;
+        use std::sync::{Arc, Mutex};
+        use std::time::Duration;
+
+        // ── 卸载阶段 (0% → 30%) ──────────────────────────────────────────
+        let emit = |pct: u32| {
+            let _ = window.emit("install_progress", serde_json::json!({
+                "tool": &tool, "progress": pct, "done": false
+            }));
+        };
+
+        let step = |label: &str, args: &[&str]| -> bool {
+            log::info!("[uninstall] {} {:?}", label, args);
+            run_cmd_silent(args[0], &args[1..], &path)
+        };
+
+        let uninstall_steps: Vec<(&str, Vec<&str>)> = match tool.as_str() {
+            "nodejs" | "npm" => vec![
+                ("winget node",   vec!["cmd", "/C", "winget", "uninstall", "OpenJS.NodeJS", "--silent"]),
+                ("winget node lts",vec!["cmd", "/C", "winget", "uninstall", "OpenJS.NodeJS.LTS", "--silent"]),
+                ("nvm uninstall", vec!["cmd", "/C", "nvm", "uninstall", "current"]),
+                ("rm nodejs dir", vec!["__rm_dir__", r"C:\Program Files\nodejs"]),
+                ("rm npm",        vec!["__rm_dir__", r"__APPDATA__\npm"]),
+                ("rm npm-cache",  vec!["__rm_dir__", r"__APPDATA__\npm-cache"]),
+            ],
+            "python" => vec![
+                ("winget python",   vec!["cmd", "/C", "winget", "uninstall", "Python.Python.3", "--silent"]),
+                ("winget python313",vec!["cmd", "/C", "winget", "uninstall", "Python.Python.3.13", "--silent"]),
+                ("winget python312",vec!["cmd", "/C", "winget", "uninstall", "Python.Python.3.12", "--silent"]),
+                ("rm python dir",   vec!["__rm_dir__", r"__LOCALAPPDATA__\Programs\Python"]),
+                ("rm appdata python",vec!["__rm_dir__", r"__APPDATA__\Python"]),
+            ],
+            "git" => vec![
+                ("winget git",   vec!["cmd", "/C", "winget", "uninstall", "Git.Git", "--silent"]),
+                ("rm git dir",   vec!["__rm_dir__", r"C:\Program Files\Git"]),
+            ],
+            "vscode" => vec![
+                ("winget vscode",   vec!["cmd", "/C", "winget", "uninstall", "Microsoft.VisualStudioCode", "--silent"]),
+                ("rm vscode dir",   vec!["__rm_dir__", r"__LOCALAPPDATA__\Programs\Microsoft VS Code"]),
+            ],
+            "chrome" => vec![
+                ("winget chrome",   vec!["cmd", "/C", "winget", "uninstall", "Google.Chrome", "--silent"]),
+                ("rm chrome dir",   vec!["__rm_dir__", r"__LOCALAPPDATA__\Google\Chrome"]),
+            ],
+            "claude" => vec![
+                ("npm uninstall claude", vec!["cmd", "/C", "npm", "uninstall", "-g", "@anthropic-ai/claude-code"]),
+                ("rm claude bin",        vec!["__rm_dir__", r"__USERPROFILE__\.local\bin"]),
+                ("rm claude config",     vec!["__rm_dir__", r"__USERPROFILE__\.claude"]),
+            ],
+            _ => vec![],
+        }
+        ;
+
+        let total = uninstall_steps.len() as u32;
+        for (i, (label, args)) in uninstall_steps.iter().enumerate() {
+            let pct = ((i as u32 + 1) * 30) / total.max(1);
+            emit(pct);
+            if args[0] == "__rm_dir__" {
+                let p = args[1]
+                    .replace("__APPDATA__", &std::env::var("APPDATA").unwrap_or_default())
+                    .replace("__LOCALAPPDATA__", &std::env::var("LOCALAPPDATA").unwrap_or_default())
+                    .replace("__USERPROFILE__", &std::env::var("USERPROFILE").unwrap_or_default());
+                let ok = remove_dir_silent(&p);
+                log::info!("[uninstall] rm {} => {}", p, ok);
+            } else {
+                let ok = step(label, args);
+                log::info!("[uninstall] {} => {}", label, ok);
+            }
+        }
+
+        // 卸载完成后等待 2 秒
+        std::thread::sleep(Duration::from_secs(2));
+
+        // ── 安装阶段 (30% → 100%) ────────────────────────────────────────
         let full_cmd = match tool.as_str() {
             "nodejs" | "npm" => "winget install OpenJS.NodeJS --accept-package-agreements --accept-source-agreements",
             "python" => "winget install Python.Python.3 --accept-package-agreements --accept-source-agreements",
@@ -343,52 +521,205 @@ pub fn install_tool(tool: String) -> (bool, String) {
             _ => return (false, "不支持的工具".to_string()),
         };
 
-        match Command::new("cmd")
+        let mut c = Command::new("cmd");
+        c.creation_flags(0x08000000);
+        let child = c
             .args(["/C", full_cmd])
             .env("PATH", &path)
-            .output()
-        {
-            Ok(output) => {
-                let success = output.status.success();
-                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                let msg = if success {
-                    format!("安装成功\n{}", stdout.trim())
-                } else {
-                    format!("安装失败\n{}", if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() })
-                };
-                (success, msg)
-            }
-            Err(e) => (false, format!("执行安装命令失败: {}", e)),
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn();
+
+        let mut child = match child {
+            Ok(c) => c,
+            Err(e) => return (false, format!("执行安装命令失败: {}", e)),
+        };
+
+        let re = regex::Regex::new(r"(\d{1,3})%").unwrap();
+        let last_pct = Arc::new(Mutex::new(0u32));
+        let tool_clone = tool.clone();
+        let last_clone = last_pct.clone();
+        let window_clone = window.clone();
+
+        if let Some(stdout) = child.stdout.take() {
+            let re = re.clone();
+            let tool = tool_clone.clone();
+            let last = last_clone.clone();
+            let win = window_clone.clone();
+            std::thread::spawn(move || {
+                let reader = BufReader::new(stdout);
+                for line in reader.lines() {
+                    let line = match line { Ok(l) => l, Err(_) => continue };
+                    log::debug!("[install] {}", line);
+                    if let Some(cap) = re.captures(&line) {
+                        if let Ok(pct) = cap[1].parse::<u32>() {
+                            let mut last = last.lock().unwrap();
+                            if pct > *last {
+                                *last = pct;
+                                let mapped = 30 + pct * 70 / 100;
+                                let _ = win.emit("install_progress", serde_json::json!({
+                                    "tool": &tool, "progress": mapped, "done": false
+                                }));
+                            }
+                        }
+                    }
+                }
+            });
         }
+
+        if let Some(stderr) = child.stderr.take() {
+            std::thread::spawn(move || {
+                let reader = BufReader::new(stderr);
+                for line in reader.lines().flatten() {
+                    log::debug!("[install stderr] {}", line);
+                }
+            });
+        }
+
+        // winget 无百分比时自动递增
+        let tool_timer = tool_clone.clone();
+        let last_timer = last_pct.clone();
+        let win_timer = window_clone.clone();
+        let running = Arc::new(Mutex::new(true));
+        let running_timer = running.clone();
+        let timer = std::thread::spawn(move || {
+            while *running_timer.lock().unwrap() {
+                std::thread::sleep(Duration::from_millis(500));
+                let mut last = last_timer.lock().unwrap();
+                if *last == 0 && *last < 90 {
+                    *last += 15;
+                    if *last > 90 { *last = 90; }
+                    let mapped = 30 + *last * 70 / 100;
+                    let _ = win_timer.emit("install_progress", serde_json::json!({
+                        "tool": &tool_timer, "progress": mapped, "done": false
+                    }));
+                }
+            }
+        });
+
+        let status = child.wait();
+        *running.lock().unwrap() = false;
+        let _ = timer.join();
+
+        let success = status.map(|s| s.success()).unwrap_or(false);
+        let msg = if success { "安装成功".to_string() } else { "安装失败".to_string() };
+
+        append_install_log(&tool, success, &msg);
+
+        let _ = window.emit("install_progress", serde_json::json!({
+            "tool": &tool, "progress": 100, "done": true
+        }));
+
+        (success, msg)
     }
 
     #[cfg(not(target_os = "windows"))]
     {
+        use std::time::Duration;
+
+        // ── 卸载阶段 (0% → 30%) ──────────────────────────────────────────
+        let emit = |pct: u32| {
+            let _ = window.emit("install_progress", serde_json::json!({
+                "tool": &tool, "progress": pct, "done": false
+            }));
+        };
+
+        let home = std::env::var("HOME").unwrap_or_default();
+
+        // 类型: ("__cmd__", cmd) 执行 shell 命令 | ("__rm__", path) 删除目录
+        let uninstall_steps: Vec<(&str, &str)> = match tool.as_str() {
+            "nodejs" | "npm" => vec![
+                ("__cmd__", "brew uninstall node 2>/dev/null"),
+                ("__cmd__", "brew uninstall node@22 2>/dev/null; brew uninstall node@20 2>/dev/null; brew uninstall node@18 2>/dev/null"),
+                ("__cmd__", "test -s ~/.nvm/nvm.sh && . ~/.nvm/nvm.sh 2>/dev/null && nvm uninstall $(nvm current) 2>/dev/null || true"),
+                ("__rm__",  "/usr/local/bin/node"),
+                ("__rm__",  "/opt/homebrew/bin/node"),
+                ("__rm__",  "/usr/local/bin/npm"),
+                ("__rm__",  "/opt/homebrew/bin/npm"),
+                ("__rm_h__", "~/.npm"),
+                ("__rm_h__", "~/.npm-cache"),
+            ],
+            "python" => vec![
+                ("__cmd__", "brew uninstall python 2>/dev/null"),
+                ("__cmd__", "brew uninstall python3 2>/dev/null"),
+                ("__rm__",  "/usr/local/bin/python3"),
+                ("__rm__",  "/opt/homebrew/bin/python3"),
+                ("__rm__",  "/usr/local/bin/pip3"),
+                ("__rm__",  "/opt/homebrew/bin/pip3"),
+            ],
+            "git" => vec![
+                ("__cmd__", "brew uninstall git 2>/dev/null"),
+                ("__rm__",  "/usr/local/bin/git"),
+                ("__rm__",  "/opt/homebrew/bin/git"),
+            ],
+            "vscode" => vec![
+                ("__rm__",  "/Applications/Visual Studio Code.app"),
+                ("__rm_h__", "~/Library/Application Support/Code"),
+                ("__rm_h__", "~/.vscode"),
+            ],
+            "chrome" => vec![
+                ("__rm__",  "/Applications/Google Chrome.app"),
+                ("__rm_h__", "~/Library/Application Support/Google/Chrome"),
+            ],
+            "claude" => vec![
+                ("__cmd__", "npm uninstall -g @anthropic-ai/claude-code 2>/dev/null"),
+                ("__rm_h__", "~/.local/bin/claude"),
+                ("__rm_h__", "~/.claude"),
+            ],
+            _ => vec![],
+        };
+
+        let total = uninstall_steps.len() as u32;
+        for (i, (kind, val)) in uninstall_steps.iter().enumerate() {
+            let pct = ((i as u32 + 1) * 30) / total.max(1);
+            emit(pct);
+            match *kind {
+                "__cmd__" => {
+                    let ok = run_cmd_silent("/bin/zsh", &["-c", val], &path);
+                    log::info!("[uninstall] cmd '{}' => {}", val, ok);
+                }
+                "__rm__" => {
+                    let ok = remove_dir_silent(val);
+                    log::info!("[uninstall] rm '{}' => {}", val, ok);
+                }
+                "__rm_h__" => {
+                    let expanded = val.replace("~", &home);
+                    let ok = remove_dir_silent(&expanded);
+                    log::info!("[uninstall] rm '{}' => {}", expanded, ok);
+                }
+                _ => {}
+            }
+        }
+
+        std::thread::sleep(Duration::from_secs(2));
+
+        // ── 安装阶段 (30% → 100%) ────────────────────────────────────────
+        emit(35);
         let (cmd, args) = match tool.as_str() {
-            "nodejs" | "npm" => ("brew", vec!["install", "node"]),
-            "python" => ("brew", vec!["install", "python3"]),
-            "git" => ("brew", vec!["install", "git"]),
-            "vscode" => ("brew", vec!["install", "--cask", "visual-studio-code"]),
-            "chrome" => ("brew", vec!["install", "--cask", "google-chrome"]),
-            "claude" => ("npm", vec!["install", "-g", "@anthropic-ai/claude-code"]),
+            "nodejs" | "npm" => ("/bin/zsh", vec!["-c", "brew install node"]),
+            "python" => ("/bin/zsh", vec!["-c", "brew install python3"]),
+            "git" => ("/bin/zsh", vec!["-c", "brew install git"]),
+            "vscode" => ("/bin/zsh", vec!["-c", "brew install --cask visual-studio-code"]),
+            "chrome" => ("/bin/zsh", vec!["-c", "brew install --cask google-chrome"]),
+            "claude" => ("/bin/zsh", vec!["-c", "npm install -g @anthropic-ai/claude-code"]),
             _ => return (false, "不支持的工具".to_string()),
         };
 
-        match Command::new(cmd).args(&args).env("PATH", &path).output() {
-            Ok(output) => {
-                let success = output.status.success();
-                let stdout = String::from_utf8_lossy(&output.stdout).to_string();
-                let stderr = String::from_utf8_lossy(&output.stderr).to_string();
-                let msg = if success {
-                    format!("安装成功\n{}", stdout.trim())
-                } else {
-                    format!("安装失败\n{}", if stderr.trim().is_empty() { stdout.trim() } else { stderr.trim() })
-                };
-                (success, msg)
-            }
-            Err(e) => (false, format!("执行安装命令失败: {}", e)),
-        }
+        let result = run_cmd_silent(cmd, &args, &path);
+        emit(100);
+
+        let (success, msg) = if result {
+            (true, "安装成功".to_string())
+        } else {
+            (false, "安装失败".to_string())
+        };
+        append_install_log(&tool, success, &msg);
+
+        let _ = window.emit("install_progress", serde_json::json!({
+            "tool": &tool, "progress": 100, "done": true
+        }));
+
+        (success, msg)
     }
 }
 
@@ -420,35 +751,35 @@ pub fn debug_env() -> String {
 
     // node
     log_line("--- node ---", "");
-    match Command::new("cmd").args(["/C", "node", "--version"]).env("PATH", &shell_path).output() {
+    match { let mut c = Command::new("cmd"); c.creation_flags(0x08000000); c }.args(["/C", "node", "--version"]).env("PATH", &shell_path).output() {
         Ok(o) => log_line("cmd /C node --version", &format!("exit={:?} stdout=[{}] stderr=[{}]", o.status.code(), String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim())),
         Err(e) => log_line("cmd /C node --version", &format!("错误: {}", e)),
     }
 
     // npm
     log_line("--- npm ---", "");
-    match Command::new("cmd").args(["/C", "npm", "--version"]).env("PATH", &shell_path).output() {
+    match { let mut c = Command::new("cmd"); c.creation_flags(0x08000000); c }.args(["/C", "npm", "--version"]).env("PATH", &shell_path).output() {
         Ok(o) => log_line("cmd /C npm --version", &format!("exit={:?} stdout=[{}] stderr=[{}]", o.status.code(), String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim())),
         Err(e) => log_line("cmd /C npm --version", &format!("错误: {}", e)),
     }
 
     // code
     log_line("--- code ---", "");
-    match Command::new("cmd").args(["/C", "code", "--version"]).env("PATH", &shell_path).output() {
+    match { let mut c = Command::new("cmd"); c.creation_flags(0x08000000); c }.args(["/C", "code", "--version"]).env("PATH", &shell_path).output() {
         Ok(o) => log_line("cmd /C code --version", &format!("exit={:?} stdout=[{}] stderr=[{}]", o.status.code(), String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim())),
         Err(e) => log_line("cmd /C code --version", &format!("错误: {}", e)),
     }
 
     // git
     log_line("--- git ---", "");
-    match Command::new("cmd").args(["/C", "git", "--version"]).env("PATH", &shell_path).output() {
+    match { let mut c = Command::new("cmd"); c.creation_flags(0x08000000); c }.args(["/C", "git", "--version"]).env("PATH", &shell_path).output() {
         Ok(o) => log_line("cmd /C git --version", &format!("exit={:?} stdout=[{}] stderr=[{}]", o.status.code(), String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim())),
         Err(e) => log_line("cmd /C git --version", &format!("错误: {}", e)),
     }
 
     // claude
     log_line("--- claude ---", "");
-    match Command::new("cmd").args(["/C", "claude", "--version"]).env("PATH", &shell_path).output() {
+    match { let mut c = Command::new("cmd"); c.creation_flags(0x08000000); c }.args(["/C", "claude", "--version"]).env("PATH", &shell_path).output() {
         Ok(o) => log_line("cmd /C claude --version", &format!("exit={:?} stdout=[{}] stderr=[{}]", o.status.code(), String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim())),
         Err(e) => log_line("cmd /C claude --version", &format!("错误: {}", e)),
     }
@@ -486,7 +817,7 @@ pub fn debug_env() -> String {
                 Ok(key) => match key.get_value::<String, _>("") {
                     Ok(exe) => {
                         log_line("App Paths exe", &format!("{} => {}", path, exe));
-                        match Command::new(&exe).arg("--version").env("PATH", &shell_path).output() {
+                        match { let mut c = Command::new(&exe); c.creation_flags(0x08000000); c }.arg("--version").env("PATH", &shell_path).output() {
                             Ok(o) => log_line("chrome --version", &format!("exit={:?} stdout=[{}] stderr=[{}]", o.status.code(), String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim())),
                             Err(e) => log_line("chrome --version", &format!("错误: {}", e)),
                         }

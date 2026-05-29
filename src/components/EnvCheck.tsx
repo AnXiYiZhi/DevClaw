@@ -1,6 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import {
   Loader2,
   CheckCircle,
@@ -10,6 +11,12 @@ import {
   Monitor,
   Terminal,
   RefreshCw,
+  Wrench,
+  FileText,
+  X,
+  Download,
+  SquareCheck,
+  Square,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 
@@ -71,9 +78,13 @@ export function EnvCheck({ onDone }: EnvCheckProps) {
   const [loading, setLoading] = useState(true);
   const [npmAvail, setNpmAvail] = useState<NpmAvailability>({ available: false, checked: false });
   const [installing, setInstalling] = useState<Record<string, boolean>>({});
-  const [installMsg, setInstallMsg] = useState<Record<string, string | null>>({});
-  const [debugOutput, setDebugOutput] = useState<string | null>(null);
-  const [debugLoading, setDebugLoading] = useState(false);
+  const [installProgress, setInstallProgress] = useState<Record<string, number>>({});
+  const [fixInProgress, setFixInProgress] = useState(false);
+  const [selectedTools, setSelectedTools] = useState<Record<string, boolean>>({});
+  const [batchInstalling, setBatchInstalling] = useState(false);
+  const [installModal, setInstallModal] = useState<{
+    tool: string; logLines: string[]; progress: number; done: boolean;
+  } | null>(null);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -97,8 +108,56 @@ export function EnvCheck({ onDone }: EnvCheckProps) {
     }
   }, []);
 
+  // 检测完成后，默认勾选未安装的工具（npm 随 nodejs 自动安装，跳过）
+  useEffect(() => {
+    if (loading) return;
+    const allItems = [...BASIC_ENV, ...BASIC_TOOLS, ...AI_TOOLS];
+    const init: Record<string, boolean> = {};
+    allItems.forEach((item) => {
+      if (item.key === "npm") return;
+      const v = versions[item.key];
+      init[item.key] = v === undefined || v === null;
+    });
+    setSelectedTools(init);
+  }, [loading, versions]);
+
   useEffect(() => {
     fetchAll();
+  }, [fetchAll]);
+
+  // 监听安装进度事件
+  useEffect(() => {
+    const unlisten = listen<{ tool: string; progress: number; done: boolean }>(
+      "install_progress",
+      (event) => {
+        const { tool, progress, done } = event.payload;
+        setInstallProgress((s) => ({ ...s, [tool]: progress }));
+        setInstallModal((prev) => {
+          if (!prev || prev.tool !== tool) return prev;
+          const phase = progress <= 30 ? "卸载" : "安装";
+          const line = done
+            ? `✓ 安装流程结束，正在检测版本...`
+            : `${phase}中... ${progress}%`;
+          const lines = [...prev.logLines, line];
+          return { ...prev, logLines: lines, progress, done };
+        });
+        if (done) {
+          setTimeout(async () => {
+            await fetchAll();
+            setInstalling((s) => ({ ...s, [tool]: false }));
+            setInstallProgress((s) => {
+              const next = { ...s };
+              delete next[tool];
+              return next;
+            });
+            setInstallModal(null);
+          }, 1000);
+        }
+      }
+    );
+    return () => {
+      unlisten.then((fn) => fn());
+    };
   }, [fetchAll]);
 
   const openUrl = async (url: string) => {
@@ -111,36 +170,72 @@ export function EnvCheck({ onDone }: EnvCheckProps) {
 
   const handleInstall = async (toolKey: string) => {
     setInstalling((s) => ({ ...s, [toolKey]: true }));
-    setInstallMsg((s) => ({ ...s, [toolKey]: null }));
+    setInstallProgress((s) => ({ ...s, [toolKey]: 0 }));
+    const allItems = [...BASIC_ENV, ...BASIC_TOOLS, ...AI_TOOLS];
+    const toolName = allItems.find((it) => it.key === toolKey)?.name || toolKey;
+    setInstallModal({ tool: toolName, logLines: [`开始卸载 ${toolName}...`], progress: 0, done: false });
     try {
-      const [success, msg] = await invoke<[boolean, string]>("install_tool", { tool: toolKey });
-      setInstallMsg((s) => ({ ...s, [toolKey]: msg }));
-      if (success) {
-        const newVer = await invoke<string | null>("check_single_env", { tool: toolKey });
-        setVersions((s) => ({ ...s, [toolKey]: newVer }));
-        if (toolKey === "npm" || toolKey === "nodejs") {
-          try {
-            const ok = await invoke<boolean>("check_npm_available");
-            setNpmAvail({ available: ok, checked: true });
-          } catch {
-            setNpmAvail({ available: false, checked: true });
-          }
-        }
-      }
+      await invoke("install_tool", { tool: toolKey });
     } catch (e: any) {
-      setInstallMsg((s) => ({ ...s, [toolKey]: `错误: ${e?.toString() || "未知错误"}` }));
-    } finally {
+      console.error("install error:", e);
+      setInstallModal((prev) => prev ? {
+        ...prev, logLines: [...prev.logLines, `错误: ${e?.toString() || "未知错误"}`], done: true
+      } : prev);
       setInstalling((s) => ({ ...s, [toolKey]: false }));
+      setInstallProgress((s) => {
+        const next = { ...s };
+        delete next[toolKey];
+        return next;
+      });
+    }
+  };
+
+  const handleFixNpm = async () => {
+    setFixInProgress(true);
+    try {
+      const [success] = await invoke<[boolean, string]>("fix_npm_registry");
+      if (success) {
+        const ok = await invoke<boolean>("check_npm_available");
+        setNpmAvail({ available: ok, checked: true });
+      }
+    } catch {
+      // ignore
+    } finally {
+      setFixInProgress(false);
     }
   };
 
   const installedCount = Object.values(versions).filter(Boolean).length;
+
+  const handleBatchInstall = async () => {
+    const tools = Object.entries(selectedTools)
+      .filter(([, v]) => v)
+      .map(([k]) => k);
+    if (tools.length === 0) return;
+    setBatchInstalling(true);
+    for (const toolKey of tools) {
+      await handleInstall(toolKey);
+      // 等待当前工具安装完成（install_progress done 事件会清理 installing 状态）
+      await new Promise<void>((resolve) => {
+        const check = setInterval(() => {
+          setInstalling((s) => {
+            if (!s[toolKey]) {
+              clearInterval(check);
+              resolve();
+            }
+            return s;
+          });
+        }, 200);
+      });
+    }
+    setBatchInstalling(false);
+  };
   const totalCount = BASIC_ENV.length + BASIC_TOOLS.length + AI_TOOLS.length;
 
   const renderStatusText = (item: EnvItem) => {
     if (loading) {
       return (
-        <span className="text-[12px] text-muted-foreground flex items-center gap-1">
+        <span className="text-[11px] text-muted-foreground flex items-center gap-1">
           <Loader2 className="w-3 h-3 animate-spin" />
           检测中
         </span>
@@ -149,73 +244,120 @@ export function EnvCheck({ onDone }: EnvCheckProps) {
     const version = versions[item.key];
     const installed = version !== undefined && version !== null;
     if (!installed) {
-      return <span className="text-[12px] text-muted-foreground">未检测到</span>;
+      return <span className="text-[11px] text-muted-foreground">未检测到</span>;
     }
+    const display = version.length > 15 ? version.slice(0, 14) + "…" : version;
     return (
-      <span className="flex items-center gap-1.5">
-        <span className="text-[12px] text-green-500 font-mono">{version}</span>
-        {item.key === "npm" && npmAvail.checked && (
-          <span className={`text-[10px] ${npmAvail.available ? "text-green-500" : "text-red-500"}`}>
-            {npmAvail.available ? "可用" : "不可用"}
-          </span>
-        )}
+      <span className="text-[11px] text-green-500 font-mono whitespace-nowrap overflow-hidden text-ellipsis leading-tight" title={version}>
+        {display}
       </span>
     );
   };
 
   const renderGroup = (title: string, items: EnvItem[]) => (
-    <div className="flex flex-col rounded-xl border border-border/60 bg-muted/30 p-4">
-      <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3">
+    <div className="flex flex-col rounded-lg border border-border/60 bg-muted/30 p-4">
+      <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-3 shrink-0">
         {title}
       </h3>
       <div className="flex flex-col">
-        {items.map((item, i) => {
+        {items.map((item) => {
           const version = loading ? undefined : versions[item.key];
           const installed = version !== undefined && version !== null;
           const isInstalling = installing[item.key];
-          const msg = installMsg[item.key];
+          const progress = installProgress[item.key];
+          const isNpm = item.key === "npm";
           return (
-            <div key={item.key}>
-              {i > 0 && <div className="border-t border-border/40" />}
-              <div className="flex items-center gap-3" style={{ height: 72 }}>
-                <ToolIcon item={item} />
-                <div className="flex flex-col min-w-0 flex-1 gap-0.5">
-                  <span className="text-[14px] font-medium text-foreground truncate">
-                    {item.name}
-                  </span>
-                  {renderStatusText(item)}
-                </div>
-                <div className="flex flex-col gap-1 shrink-0" style={{ width: 88 }}>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-[11px] w-full px-2"
-                    disabled={!!isInstalling}
-                    onClick={() => handleInstall(item.key)}
-                  >
-                    {isInstalling ? (
-                      <Loader2 className="w-3 h-3 animate-spin mr-1" />
-                    ) : (
-                      <Terminal className="w-3 h-3 mr-1" />
-                    )}
-                    {isInstalling ? "安装中..." : (installed ? "重装" : "安装")}
-                  </Button>
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="h-7 text-[11px] w-full px-2"
-                    onClick={() => openUrl(item.downloadUrl)}
-                  >
-                    <ExternalLink className="w-3 h-3 mr-1" />
-                    官网
-                  </Button>
-                </div>
-              </div>
-              {msg && (
-                <div className={`text-[10px] px-1 py-0.5 rounded mb-1 ${msg.includes("成功") ? "text-green-600 bg-green-500/10" : "text-red-500 bg-red-500/10"}`}>
-                  {msg.split("\n")[0]}
-                </div>
+            <div key={item.key} className="flex items-center gap-2 py-1.5">
+              {item.key === "npm" ? (
+                <div className="w-4 h-4 shrink-0" />
+              ) : (
+                <button
+                  onClick={() => setSelectedTools((s) => ({ ...s, [item.key]: !s[item.key] }))}
+                  className="w-4 h-4 shrink-0 flex items-center justify-center text-muted-foreground hover:text-foreground transition-colors"
+                >
+                  {selectedTools[item.key] ? (
+                    <SquareCheck className="w-4 h-4 text-blue-500" />
+                  ) : (
+                    <Square className="w-4 h-4" />
+                  )}
+                </button>
               )}
+              <ToolIcon item={item} />
+              <div className="flex flex-col min-w-0 flex-1 overflow-hidden gap-0.5">
+                <span className="text-[13px] font-medium text-foreground leading-tight whitespace-nowrap overflow-hidden text-overflow-ellipsis">
+                  {item.name}
+                </span>
+                {renderStatusText(item)}
+              </div>
+              <div className="flex flex-row gap-1 shrink-0">
+                {isNpm ? (
+                  <>
+                    {installed && npmAvail.checked ? (
+                      <div className="flex items-center justify-center flex-1">
+                        <span className={`h-6 flex items-center justify-center text-[11px] px-1.5 rounded-md border font-medium whitespace-nowrap ${
+                          npmAvail.available
+                            ? "bg-green-500/10 border-green-500/30 text-green-500"
+                            : "bg-red-500/10 border-red-500/30 text-red-500"
+                        }`}>
+                          {npmAvail.available ? "可用" : "不可用"}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="flex items-center justify-center flex-1">
+                        <span className="h-6 flex items-center justify-center text-[11px] px-1.5 text-muted-foreground whitespace-nowrap">
+                          检测中...
+                        </span>
+                      </div>
+                    )}
+                    {installed && npmAvail.checked && !npmAvail.available && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="h-6 text-[11px] px-1.5 py-[3px] text-orange-500 border-orange-500/30 hover:bg-orange-500/10 whitespace-nowrap gap-0"
+                        disabled={fixInProgress}
+                        onClick={handleFixNpm}
+                      >
+                        {fixInProgress ? (
+                          <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                        ) : (
+                          <Wrench className="w-3.5 h-3.5" />
+                        )}
+                        修复
+                      </Button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 text-[11px] px-1.5 py-[3px] whitespace-nowrap gap-0"
+                      disabled={!!isInstalling}
+                      onClick={() => handleInstall(item.key)}
+                    >
+                      {isInstalling ? (
+                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                      ) : (
+                        <Terminal className="w-3.5 h-3.5" />
+                      )}
+                      {isInstalling
+                        ? (progress !== undefined
+                            ? (progress <= 30 ? `卸载 ${progress}%` : `安装 ${progress}%`)
+                            : "处理中...")
+                        : (installed ? "重装" : "安装")}
+                    </Button>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="h-6 text-[11px] px-1.5 py-[3px] whitespace-nowrap gap-0"
+                      onClick={() => openUrl(item.downloadUrl)}
+                    >
+                      <ExternalLink className="w-3.5 h-3.5" />
+                      官网
+                    </Button>
+                  </>
+                )}
+              </div>
             </div>
           );
         })}
@@ -224,18 +366,18 @@ export function EnvCheck({ onDone }: EnvCheckProps) {
   );
 
   return (
-    <div className="flex items-center justify-center h-screen w-screen bg-background px-6">
+    <div className="relative flex items-center justify-center min-h-screen w-screen bg-background px-4 py-4">
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.4, ease: "easeOut" }}
-        className="glass-card w-full max-w-3xl flex flex-col p-6"
+        className="glass-card w-full max-w-5xl flex flex-col p-5"
       >
-        <div className="flex flex-col items-center gap-3 mb-3">
-          <div className="w-14 h-14 rounded-xl bg-blue-600 flex items-center justify-center">
-            <Monitor className="w-7 h-7 text-white" />
+        <div className="flex flex-col items-center gap-2 mb-3">
+          <div className="w-10 h-10 rounded-lg bg-blue-600 flex items-center justify-center">
+            <Monitor className="w-5 h-5 text-white" />
           </div>
-          <h1 className="text-2xl font-bold text-foreground">环境检测</h1>
+          <h1 className="text-xl font-bold text-foreground">环境检测</h1>
           <p className="text-sm text-muted-foreground flex items-center gap-1.5">
             检测开发环境依赖的安装状态
             {!loading && (
@@ -251,10 +393,24 @@ export function EnvCheck({ onDone }: EnvCheckProps) {
             >
               <RefreshCw className={`w-3.5 h-3.5 ${loading ? "animate-spin" : ""}`} />
             </button>
+            <button
+              onClick={async () => {
+                if (installModal) return;
+                try {
+                  const content = await invoke<string>("read_install_log");
+                  const lines = content.split("\n").filter(Boolean);
+                  setInstallModal({ tool: "历史日志", logLines: lines.length ? lines : ["暂无安装日志"], progress: 100, done: true });
+                } catch { setInstallModal({ tool: "历史日志", logLines: ["读取日志失败"], progress: 100, done: true }); }
+              }}
+              className="inline-flex items-center justify-center w-5 h-5 rounded hover:bg-muted-foreground/10 transition-colors"
+              title="安装日志"
+            >
+              <FileText className="w-3.5 h-3.5" />
+            </button>
           </p>
         </div>
 
-        <div className="grid grid-cols-3 gap-4">
+        <div className="grid grid-cols-3 gap-3">
           {renderGroup("基础环境", BASIC_ENV)}
           {renderGroup("基础工具", BASIC_TOOLS)}
           {renderGroup("AI 工具", AI_TOOLS)}
@@ -262,53 +418,102 @@ export function EnvCheck({ onDone }: EnvCheckProps) {
 
         <div className="flex items-center gap-3 justify-center mt-3">
           {!loading && installedCount < totalCount && (
-            <span className="text-xs text-muted-foreground flex items-center gap-1">
+            <span className="text-[11px] text-muted-foreground flex items-center gap-1">
               <XCircle className="w-3 h-3 text-yellow-500" />
               部分工具未安装，可点击"安装"或"官网"按钮
             </span>
           )}
           {!loading && installedCount === totalCount && (
-            <span className="text-xs text-green-500 flex items-center gap-1">
+            <span className="text-[11px] text-green-500 flex items-center gap-1">
               <CheckCircle className="w-3 h-3" />
               所有工具已安装
             </span>
           )}
         </div>
 
-        {/* 临时调试按钮 */}
-        <div className="flex flex-col gap-2 mt-2">
-          <Button
-            variant="destructive"
-            size="sm"
-            className="w-full"
-            disabled={debugLoading}
-            onClick={async () => {
-              setDebugLoading(true);
-              try {
-                const result = await invoke<string>("debug_env");
-                setDebugOutput(result);
-              } catch (e: any) {
-                setDebugOutput(`调用失败: ${e?.toString()}`);
-              } finally {
-                setDebugLoading(false);
-              }
-            }}
-          >
-            {debugLoading ? <Loader2 className="w-4 h-4 animate-spin mr-2" /> : null}
-            [调试] 运行 debug_env
-          </Button>
-          {debugOutput && (
-            <pre className="text-[10px] bg-black/80 text-green-400 p-3 rounded-lg overflow-auto max-h-60 whitespace-pre-wrap font-mono">
-              {debugOutput}
-            </pre>
+        <Button
+          variant="default"
+          size="sm"
+          className="w-full mt-2 h-8 text-[12px]"
+          disabled={batchInstalling || loading || !Object.values(selectedTools).some(Boolean)}
+          onClick={handleBatchInstall}
+        >
+          {batchInstalling ? (
+            <Loader2 className="w-4 h-4 animate-spin mr-1.5" />
+          ) : (
+            <Download className="w-4 h-4 mr-1.5" />
           )}
-        </div>
+          一键安装（{Object.values(selectedTools).filter(Boolean).length} 项）
+        </Button>
 
-        <Button onClick={onDone} size="lg" className="w-full mt-3">
+        <Button
+          variant="destructive"
+          size="sm"
+          className="w-full mt-2 h-7 text-[11px]"
+          onClick={async () => {
+            try {
+              const result = await invoke<string>("debug_env");
+              console.log(result);
+            } catch (e: any) {
+              console.error("debug_env failed:", e);
+            }
+          }}
+        >
+          [调试] 运行 debug_env
+        </Button>
+
+        <Button onClick={onDone} className="w-full mt-3 h-9 text-sm">
           完成，进入 DevClaw
           <ArrowRight className="w-4 h-4 ml-2" />
         </Button>
       </motion.div>
+
+      {/* 安装弹窗 */}
+      {installModal && (
+        <div className="absolute inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm">
+          <div className="flex flex-col w-[600px] h-[400px] rounded-xl border border-border/60 bg-background shadow-2xl overflow-hidden">
+            {/* 标题栏 */}
+            <div className="flex items-center justify-between px-5 py-3 border-b border-border/40">
+              <span className="text-sm font-medium text-foreground">
+                {installModal.done && installModal.tool !== "历史日志" ? "安装完成" : `正在安装 ${installModal.tool}`}
+              </span>
+              <button
+                disabled={!installModal.done}
+                onClick={() => setInstallModal(null)}
+                className="w-6 h-6 flex items-center justify-center rounded hover:bg-muted-foreground/10 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+              >
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            {/* 日志滚动区域 */}
+            <div className="flex-1 overflow-y-auto px-5 py-3 bg-black/80">
+              <pre className="text-[11px] text-green-400 whitespace-pre-wrap font-mono leading-relaxed">
+                {installModal.logLines.join("\n")}
+              </pre>
+            </div>
+
+            {/* 底部状态栏 */}
+            <div className="px-5 py-3 border-t border-border/40 flex flex-col gap-2">
+              {installModal.tool !== "历史日志" && (
+                <div className="w-full h-2 rounded-full bg-muted overflow-hidden">
+                  <div
+                    className="h-full rounded-full bg-blue-500 transition-all duration-300"
+                    style={{ width: `${installModal.progress}%` }}
+                  />
+                </div>
+              )}
+              <div className="flex items-center justify-between">
+                <span className="text-[11px] text-muted-foreground">
+                  {installModal.tool !== "历史日志"
+                    ? (installModal.done ? "安装完成，正在检测版本..." : `${installModal.progress}%`)
+                    : "历史安装日志"}
+                </span>
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

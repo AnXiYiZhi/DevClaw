@@ -1372,6 +1372,8 @@ pub fn run() {
             commands::check_env,
             commands::check_single_env,
             commands::check_npm_available,
+            commands::fix_npm_registry,
+            commands::read_install_log,
             commands::install_tool,
             commands::debug_env,
         ]);
