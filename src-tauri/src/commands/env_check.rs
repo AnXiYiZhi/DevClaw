@@ -882,15 +882,26 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                 ("__rm__",  "/usr/local/bin/git"),
                 ("__rm__",  "/opt/homebrew/bin/git"),
             ],
-            "vscode" => vec![
-                ("__rm__",  "/Applications/Visual Studio Code.app"),
-                ("__rm_h__", "~/Library/Application Support/Code"),
-                ("__rm_h__", "~/.vscode"),
-            ],
-            "chrome" => vec![
-                ("__rm__",  "/Applications/Google Chrome.app"),
-                ("__rm_h__", "~/Library/Application Support/Google/Chrome"),
-            ],
+            "vscode" => {
+                let mut steps = Vec::new();
+                steps.push(("__cmd__", "brew uninstall --cask visual-studio-code 2>/dev/null; true"));
+                steps.push(("__rm__",  "/Applications/Visual Studio Code.app"));
+                steps.push(("__rm_h__", "~/Library/Application Support/Code"));
+                steps.push(("__rm_h__", "~/.vscode"));
+                steps
+            },
+            "chrome" => {
+                let mut steps = Vec::new();
+                // 先杀掉 Chrome 进程，否则运行中的 .app bundle 被 macOS 锁定无法删除
+                steps.push(("__cmd__", "pkill -9 'Google Chrome' 2>/dev/null; true"));
+                // 尝试 brew 卸载（处理通过 brew 安装的情况）
+                steps.push(("__cmd__", "brew uninstall --cask google-chrome 2>/dev/null; true"));
+                steps.push(("__rm__",  "/Applications/Google Chrome.app"));
+                steps.push(("__rm_h__", "~/Library/Application Support/Google/Chrome"));
+                steps.push(("__rm_h__", "~/Library/Caches/Google/Chrome"));
+                steps.push(("__rm_h__", "~/Library/Caches/com.google.Chrome"));
+                steps
+            },
             "claude" => {
                 let mut steps = Vec::new();
                 // 只有 npm 可用时才执行 npm uninstall
@@ -939,25 +950,123 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
 
         // ── 安装阶段 (30% → 100%) ────────────────────────────────────────
         emit(35);
-        let (cmd, args) = match tool.as_str() {
-            "nodejs" | "npm" => ("/bin/zsh", vec!["-c", "brew install node"]),
-            "python" => ("/bin/zsh", vec!["-c", "brew install python3"]),
-            "git" => ("/bin/zsh", vec!["-c", "brew install git"]),
-            "vscode" => ("/bin/zsh", vec!["-c", "brew install --cask visual-studio-code"]),
-            "chrome" => ("/bin/zsh", vec!["-c", "brew install --cask google-chrome"]),
-            "claude" => ("/bin/zsh", vec!["-c", "npm install -g @anthropic-ai/claude-code"]),
+
+        let (success, msg) = match tool.as_str() {
+            "vscode" => {
+                // 方案1：brew update-reset 切回官方源后安装
+                emit(40);
+                append_install_log(&tool, true, "[方案1] brew update-reset + brew install");
+                let (ok1, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh",
+                    &["-c", "export HOMEBREW_BOTTLE_DOMAIN='' HOMEBREW_API_DOMAIN=''; brew update-reset 2>&1 && brew update 2>&1 && brew uninstall --cask visual-studio-code 2>/dev/null; brew install --cask visual-studio-code 2>&1"], &path);
+                if ok1 {
+                    emit(100);
+                    append_install_log(&tool, true, "[方案1] 安装成功");
+                    (true, "安装成功".to_string())
+                } else {
+                    // 方案2：修复 cask 定义文件后重试
+                    emit(55);
+                    append_install_log(&tool, false, "[方案1] 失败，[方案2] 修复cask定义");
+                    let (ok2, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh",
+                        &["-c", "brew uninstall --cask visual-studio-code 2>/dev/null; CASK=\"$(brew --repository)/Library/Taps/homebrew/homebrew-cask/Casks/v/visual-studio-code.rb\"; if [ -f \"$CASK\" ]; then sed -i '' 's/conflicts_with formula:/conflicts_with cask:/g' \"$CASK\"; fi; brew install --cask visual-studio-code 2>&1"], &path);
+                    if ok2 {
+                        emit(100);
+                        append_install_log(&tool, true, "[方案2] 安装成功");
+                        (true, "安装成功".to_string())
+                    } else {
+                        // 方案3：直接下载 DMG
+                        emit(70);
+                        append_install_log(&tool, false, "[方案2] 失败，[方案3] 直接下载DMG");
+                        let (ok3, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh",
+                            &["-c", "curl -L -o /tmp/vscode_install.zip 'https://update.code.visualstudio.com/latest/darwin-universal/stable' 2>&1 && unzip -o /tmp/vscode_install.zip -d /tmp/vscode_install_app 2>&1 && cp -R '/tmp/vscode_install_app/Visual Studio Code.app' /Applications/ 2>&1 && rm -rf /tmp/vscode_install.zip /tmp/vscode_install_app"], &path);
+                        if ok3 {
+                            emit(100);
+                            append_install_log(&tool, true, "[方案3] 安装成功");
+                            (true, "安装成功".to_string())
+                        } else {
+                            emit(100);
+                            let msg = "自动安装失败，请访问 https://code.visualstudio.com/Download 手动下载安装".to_string();
+                            append_install_log(&tool, false, &msg);
+                            (false, msg)
+                        }
+                    }
+                }
+            }
+            "nodejs" | "npm" => {
+                let (ok, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "brew install node"], &path);
+                emit(100);
+                let msg = if ok { "安装成功" } else { "安装失败" };
+                append_install_log(&tool, ok, msg);
+                (ok, msg.to_string())
+            }
+            "python" => {
+                let (ok, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "brew install python3"], &path);
+                emit(100);
+                let msg = if ok { "安装成功" } else { "安装失败" };
+                append_install_log(&tool, ok, msg);
+                (ok, msg.to_string())
+            }
+            "git" => {
+                let (ok, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "brew install git"], &path);
+                emit(100);
+                let msg = if ok { "安装成功" } else { "安装失败" };
+                append_install_log(&tool, ok, msg);
+                (ok, msg.to_string())
+            }
+            "chrome" => {
+                let (ok, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "brew uninstall --cask google-chrome 2>/dev/null; brew install --cask google-chrome"], &path);
+                emit(100);
+                let msg = if ok { "安装成功" } else { "安装失败" };
+                append_install_log(&tool, ok, msg);
+                (ok, msg.to_string())
+            }
+            "claude" => {
+                // 方案1：默认 registry
+                emit(30);
+                append_install_log(&tool, true, "[方案1] npm install (默认)");
+                let (ok1, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "npm install -g @anthropic-ai/claude-code"], &path);
+                if ok1 {
+                    emit(100);
+                    append_install_log(&tool, true, "[方案1] 安装成功");
+                    (true, "安装成功".to_string())
+                } else {
+                    // 方案2：npm 官方源
+                    emit(48);
+                    append_install_log(&tool, false, "[方案1] 失败，[方案2] npm官方源");
+                    let (ok2, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "npm install -g @anthropic-ai/claude-code --registry https://registry.npmjs.org"], &path);
+                    if ok2 {
+                        emit(100);
+                        append_install_log(&tool, true, "[方案2] 安装成功");
+                        (true, "安装成功".to_string())
+                    } else {
+                        // 方案3：清除 npm 客户端证书配置（npmrc 中 cafile/cert/key 指向无效文件时会导致 UNABLE_TO_GET_ISSUER_CERT_LOCALLY）
+                        emit(66);
+                        append_install_log(&tool, false, "[方案2] 失败，[方案3] 清除npm cert配置");
+                        let (ok3, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "npm config delete cafile 2>/dev/null; npm config delete cert 2>/dev/null; npm config delete key 2>/dev/null; npm config set strict-ssl false 2>/dev/null; npm install -g @anthropic-ai/claude-code --registry https://registry.npmjs.org"], &path);
+                        if ok3 {
+                            emit(100);
+                            append_install_log(&tool, true, "[方案3] 安装成功");
+                            (true, "安装成功".to_string())
+                        } else {
+                            // 方案4：终极兜底 — 跳过SSL校验 + 清除配置
+                            emit(84);
+                            append_install_log(&tool, false, "[方案3] 失败，[方案4] 跳过SSL+清除配置");
+                            let (ok4, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "npm config delete cafile 2>/dev/null; npm config delete cert 2>/dev/null; npm config delete key 2>/dev/null; npm config set strict-ssl false 2>/dev/null; NODE_TLS_REJECT_UNAUTHORIZED=0 npm install -g @anthropic-ai/claude-code --registry https://registry.npmjs.org"], &path);
+                            if ok4 {
+                                emit(100);
+                                append_install_log(&tool, true, "[方案4] 安装成功");
+                                (true, "安装成功".to_string())
+                            } else {
+                                emit(100);
+                                let msg = "安装失败: npm SSL配置异常，请手动执行: npm config delete cafile && npm config delete cert && npm config delete key && npm config set strict-ssl false && npm install -g @anthropic-ai/claude-code".to_string();
+                                append_install_log(&tool, false, &msg);
+                                (false, msg)
+                            }
+                        }
+                    }
+                }
+            }
             _ => return (false, "不支持的工具".to_string()),
         };
-
-        let (result, _, _) = run_cmd_logged(&tool, "安装", cmd, &args, &path);
-        emit(100);
-
-        let (success, msg) = if result {
-            (true, "安装成功".to_string())
-        } else {
-            (false, "安装失败".to_string())
-        };
-        append_install_log(&tool, success, &msg);
 
         let _ = window.emit("install_progress", serde_json::json!({
             "tool": &tool, "progress": 100, "done": true
