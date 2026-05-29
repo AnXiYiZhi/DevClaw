@@ -631,9 +631,10 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                     steps
                 }
             "python" => vec![
-                ("winget python",   vec!["cmd", "/C", "winget", "uninstall", "Python.Python.3", "--silent"]),
                 ("winget python313",vec!["cmd", "/C", "winget", "uninstall", "Python.Python.3.13", "--silent"]),
                 ("winget python312",vec!["cmd", "/C", "winget", "uninstall", "Python.Python.3.12", "--silent"]),
+                ("winget python311",vec!["cmd", "/C", "winget", "uninstall", "Python.Python.3.11", "--silent"]),
+                ("winget python310",vec!["cmd", "/C", "winget", "uninstall", "Python.Python.3.10", "--silent"]),
                 ("rm python dir",   vec!["__rm_dir__", r"__LOCALAPPDATA__\Programs\Python"]),
                 ("rm appdata python",vec!["__rm_dir__", r"__APPDATA__\Python"]),
             ],
@@ -692,11 +693,11 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
 
         // ── 安装阶段 (30% → 100%) ────────────────────────────────────────
         let full_cmd = match tool.as_str() {
-            "nodejs" | "npm" => "winget install OpenJS.NodeJS --accept-package-agreements --accept-source-agreements",
-            "python" => "winget install Python.Python.3 --accept-package-agreements --accept-source-agreements",
-            "git" => "winget install Git.Git --accept-package-agreements --accept-source-agreements",
-            "vscode" => "winget install Microsoft.VisualStudioCode --accept-package-agreements --accept-source-agreements",
-            "chrome" => "winget install Google.Chrome --accept-package-agreements --accept-source-agreements",
+            "nodejs" | "npm" => "winget install OpenJS.NodeJS --force --accept-package-agreements --accept-source-agreements",
+            "python" => "winget install Python.Python.3.13 --force --accept-package-agreements --accept-source-agreements",
+            "git" => "winget install Git.Git --force --accept-package-agreements --accept-source-agreements",
+            "vscode" => "winget install Microsoft.VisualStudioCode --force --accept-package-agreements --accept-source-agreements",
+            "chrome" => "winget install Google.Chrome --force --accept-package-agreements --accept-source-agreements",
             "claude" => "npm install -g @anthropic-ai/claude-code",
             _ => return (false, "不支持的工具".to_string()),
         };
