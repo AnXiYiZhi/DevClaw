@@ -121,40 +121,29 @@ jobs:
           mkdir -p release-assets
           VERSION="${GITHUB_REF_NAME}"  # e.g., v3.5.0
 
-          # Locate bundle artifacts
-          TAR_GZ=""; APP_PATH=""
+          # Locate .app bundle
+          APP_PATH=""
           for path in \
             "src-tauri/target/universal-apple-darwin/release/bundle/macos" \
             "src-tauri/target/aarch64-apple-darwin/release/bundle/macos" \
             "src-tauri/target/x86_64-apple-darwin/release/bundle/macos" \
             "src-tauri/target/release/bundle/macos"; do
             if [ -d "$path" ]; then
-              [ -z "$TAR_GZ" ]   && TAR_GZ=$(find "$path" -maxdepth 1 -name "*.tar.gz" -type f | head -1 || true)
               [ -z "$APP_PATH" ] && APP_PATH=$(find "$path" -maxdepth 1 -name "*.app" -type d | head -1 || true)
             fi
           done
 
-          if [ -z "$TAR_GZ" ]; then
-            echo "❌ No macOS .tar.gz updater artifact found" >&2
-            exit 1
-          fi
           if [ -z "$APP_PATH" ]; then
             echo "❌ No .app found" >&2
             exit 1
           fi
 
-          # 1) Collect .tar.gz (updater artifact)
-          NEW_TAR_GZ="DevClaw-${VERSION}-macOS.tar.gz"
-          cp "$TAR_GZ" "release-assets/$NEW_TAR_GZ"
-          [ -f "$TAR_GZ.sig" ] && cp "$TAR_GZ.sig" "release-assets/$NEW_TAR_GZ.sig" || echo ".sig for macOS not found yet"
-          echo "macOS updater artifact copied: $NEW_TAR_GZ"
-
-          # 2) Collect .app as zip
+          # 1) Collect .app as zip
           NEW_ZIP="DevClaw-${VERSION}-macOS.zip"
           ditto -c -k --sequesterRsrc --keepParent "$APP_PATH" "release-assets/$NEW_ZIP"
           echo "macOS zip ready: $NEW_ZIP"
 
-          # 3) Create styled DMG with create-dmg (Tauri's built-in DMG styling doesn't work on CI)
+          # 2) Create styled DMG with create-dmg
           HOMEBREW_NO_AUTO_UPDATE=1 brew install create-dmg
           NEW_DMG="DevClaw-${VERSION}-macOS.dmg"
           DMG_STAGE_DIR="$RUNNER_TEMP/dmg-stage"
