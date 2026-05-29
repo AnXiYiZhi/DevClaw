@@ -42,7 +42,7 @@ export interface CheckOptions {
 }
 
 const GITHUB_REPO = "AnXiYiZhi/DevCLaw";
-const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
+const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases`;
 
 export async function getCurrentVersion(): Promise<string> {
   try {
@@ -89,7 +89,23 @@ export async function checkForUpdate(
       throw new Error(`GitHub API returned ${resp.status}`);
     }
 
-    const data = await resp.json();
+    const releases: Array<{
+      tag_name?: string;
+      draft?: boolean;
+      prerelease?: boolean;
+      body?: string;
+      published_at?: string;
+    }> = await resp.json();
+
+    // 优先取最新正式版，没有则取最新预发布版
+    const data =
+      releases.find((r) => !r.draft && !r.prerelease) ??
+      releases.find((r) => !r.draft);
+
+    if (!data) {
+      return { status: "up-to-date" };
+    }
+
     const tagName: string = data.tag_name ?? "";
     const latestVersion = tagName.replace(/^v/, "");
 

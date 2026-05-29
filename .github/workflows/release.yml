@@ -266,11 +266,11 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: DevClaw ${{ github.ref_name }}
-          prerelease: true
+          prerelease: false
           body: |
             ## DevClaw ${{ github.ref_name }}
 
-            🌐 **Only Official Website / 唯一官方网站 / 唯一の公式サイト**: [devclaw.ccwu.cc](https://devclaw.ccwu.cc)
+            🌐 **Only Official Website / 唯一官方网站 / 唯一の公式サイト**: [devclaw.cc.cd](https://devclaw.cc.cd)
 
             Claude Code 供应商切换工具
 
