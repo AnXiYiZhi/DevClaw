@@ -16,6 +16,7 @@ export function useAutoCompact(
   const compactRef = useRef(false);
   const normalWidthRef = useRef(0);
   const lockUntilRef = useRef(0);
+  const checkTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Keep ref in sync with state so the observer callback always reads latest
   useEffect(() => {
@@ -26,8 +27,7 @@ export function useAutoCompact(
     const el = containerRef.current;
     if (!el) return;
 
-    const ro = new ResizeObserver(() => {
-      // During expand animation, ignore resize events to prevent flicker
+    const checkOverflow = () => {
       if (Date.now() < lockUntilRef.current) return;
 
       if (!compactRef.current) {
@@ -47,11 +47,34 @@ export function useAutoCompact(
           // Lock out resize events during the expand animation (200ms + 50ms margin)
           lockUntilRef.current = Date.now() + 250;
           setCompact(false);
+
+          // After lock expires, re-check in case the container still overflows
+          // (ResizeObserver won't fire if container size hasn't changed)
+          if (checkTimeoutRef.current) clearTimeout(checkTimeoutRef.current);
+          checkTimeoutRef.current = setTimeout(() => {
+            if (el.scrollWidth > el.clientWidth + 1) {
+              normalWidthRef.current = el.scrollWidth;
+              setCompact(true);
+            }
+          }, 300);
         }
       }
-    });
+    };
+
+    const ro = new ResizeObserver(checkOverflow);
+
+    // Observe the container itself (detects window resize affecting this element)
     ro.observe(el);
-    return () => ro.disconnect();
+
+    // Also observe the inner content wrapper so content size changes
+    // (e.g. compact→normal text transition) also trigger overflow checks
+    const inner = el.firstElementChild;
+    if (inner) ro.observe(inner);
+
+    return () => {
+      ro.disconnect();
+      if (checkTimeoutRef.current) clearTimeout(checkTimeoutRef.current);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
