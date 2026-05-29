@@ -77,7 +77,7 @@ export function ActivationPage({ onActivated }: ActivationPageProps) {
             <Shield className="w-7 h-7 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-foreground">DevClaw</h1>
-          <p className="text-sm text-muted-foreground">请激活以继续使用</p>
+          <p className="text-sm text-muted-foreground">请输入授权密钥以继续使用</p>
         </div>
 
         <div className="flex flex-col gap-2">
@@ -106,16 +106,19 @@ export function ActivationPage({ onActivated }: ActivationPageProps) {
 
         <div className="flex flex-col gap-2">
           <label className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-            激活码
+            授权密钥
           </label>
           <Input
-            type="password"
+            type="text"
             value={activationCode}
-            onChange={(e) => setActivationCode(e.target.value)}
-            placeholder="粘贴你的激活码"
+            onChange={(e) => setActivationCode(e.target.value.toUpperCase())}
+            placeholder="CCS-XXXX-XXXX-XXXX"
             disabled={status === "loading"}
-            className="font-mono text-sm"
+            className="font-mono text-sm tracking-wider"
           />
+          <p className="text-xs text-muted-foreground">
+            格式: CCS-XXXX-XXXX-XXXX（字母大写+数字）
+          </p>
         </div>
 
         <Button

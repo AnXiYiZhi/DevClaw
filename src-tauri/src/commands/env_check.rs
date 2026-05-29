@@ -212,6 +212,7 @@ fn detect_tool(name: &str) -> Option<String> {
 fn detect_python() -> Option<String> {
     get_command_output("python", &["--version"])
         .or_else(|| get_command_output("python3", &["--version"]))
+        .or_else(|| get_command_output("py", &["--version"]))
         .map(|s| s.strip_prefix("Python ").unwrap_or(&s).to_string())
 }
 
@@ -491,6 +492,11 @@ fn run_cmd_silent(exe: &str, args: &[&str], path: &str) -> bool {
 
 /// 执行命令并捕获输出，写入详细日志
 fn run_cmd_logged(tool: &str, label: &str, exe: &str, args: &[&str], path: &str) -> (bool, String, String) {
+    run_cmd_logged_with_accept(tool, label, exe, args, path, &[])
+}
+
+/// 执行命令并捕获输出，写入详细日志（可指定"可接受"的退出码，视为成功）
+fn run_cmd_logged_with_accept(tool: &str, label: &str, exe: &str, args: &[&str], path: &str, accept_codes: &[i32]) -> (bool, String, String) {
     let mut c = Command::new(exe);
     #[cfg(target_os = "windows")]
     c.creation_flags(0x08000000);
@@ -500,8 +506,8 @@ fn run_cmd_logged(tool: &str, label: &str, exe: &str, args: &[&str], path: &str)
         Ok(o) => {
             let stdout = String::from_utf8_lossy(&o.stdout).to_string();
             let stderr = String::from_utf8_lossy(&o.stderr).to_string();
-            let success = o.status.success();
             let code = o.status.code().unwrap_or(-1);
+            let success = o.status.success() || accept_codes.contains(&code);
             let mut log_entry = format!(
                 "[{}] {} | 退出码: {}\n  命令: {}\n  PATH: {}",
                 label, if success { "成功" } else { "失败" }, code, cmd_str, path
@@ -576,6 +582,119 @@ fn is_node_managed_by_brew() -> bool {
     }
 }
 
+/// Python 安装回退：直接下载官方安装程序并静默安装（绕过 winget 组织策略限制）
+#[cfg(target_os = "windows")]
+fn install_python_direct_fallback(path: &str, window: &tauri::Window) -> bool {
+    let emit = |pct: u32| {
+        let _ = window.emit("install_progress", serde_json::json!({
+            "tool": "python", "progress": pct, "done": false
+        }));
+    };
+
+    emit(40);
+
+    // 用 PowerShell 下载 Python 安装程序到临时目录
+    let installer_path = format!(r"{}\python-installer.exe",
+        std::env::var("TEMP").unwrap_or_else(|_| r"C:\Windows\Temp".to_string()));
+    let download_url = "https://www.python.org/ftp/python/3.13.3/python-3.13.3-amd64.exe";
+
+    append_install_log("python", true, &format!("[回退] 下载: {}", download_url));
+
+    let dl_result = Command::new("powershell")
+        .creation_flags(0x08000000)
+        .args([
+            "-NoProfile", "-NonInteractive", "-Command",
+            &format!(
+                "[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12; Invoke-WebRequest -Uri '{}' -OutFile '{}' -UseBasicParsing",
+                download_url, installer_path
+            ),
+        ])
+        .env("PATH", path)
+        .output();
+
+    match dl_result {
+        Ok(o) if o.status.success() => {
+            append_install_log("python", true, "[回退] 下载完成");
+        }
+        Ok(o) => {
+            let stderr = String::from_utf8_lossy(&o.stderr);
+            append_install_log("python", false, &format!("[回退] 下载失败: {}", stderr.trim()));
+            return false;
+        }
+        Err(e) => {
+            append_install_log("python", false, &format!("[回退] 下载命令执行失败: {}", e));
+            return false;
+        }
+    }
+
+    emit(70);
+
+    // 静默安装 Python: /quiet 静默, PrependPath=1 添加到 PATH, InstallAllUsers=0 当前用户
+    append_install_log("python", true, "[回退] 运行安装程序...");
+    let install_result = Command::new(&installer_path)
+        .creation_flags(0x08000000)
+        .args(["/quiet", "InstallAllUsers=0", "PrependPath=1"])
+        .env("PATH", path)
+        .output();
+
+    let ok = match install_result {
+        Ok(o) => {
+            let success = o.status.success();
+            if !success {
+                let stderr = String::from_utf8_lossy(&o.stderr);
+                append_install_log("python", false, &format!("[回退] 安装程序退出码: {:?}, stderr: {}", o.status.code(), stderr.trim()));
+            }
+            success
+        }
+        Err(e) => {
+            append_install_log("python", false, &format!("[回退] 安装程序执行失败: {}", e));
+            false
+        }
+    };
+
+    // 清理安装程序
+    let _ = std::fs::remove_file(&installer_path);
+
+    emit(95);
+    ok
+}
+
+/// 安装成功后刷新进程 PATH，使新安装的工具立即可被检测到
+#[cfg(target_os = "windows")]
+fn refresh_path_after_install(tool: &str) {
+    // Python 安装后会添加到用户 PATH（HKCU\Environment\Path）
+    // 读取最新的系统+用户 PATH 并更新当前进程环境变量
+    let sys_path = read_registry_path(r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment", true);
+    let user_path = read_registry_path(r"Environment", false);
+
+    let mut paths: Vec<String> = Vec::new();
+    for p in sys_path.split(';').chain(user_path.split(';')) {
+        let trimmed = p.trim();
+        if !trimmed.is_empty() && !paths.iter().any(|existing| existing.eq_ignore_ascii_case(trimmed)) {
+            paths.push(trimmed.to_string());
+        }
+    }
+    let new_path = paths.join(";");
+    if !new_path.is_empty() {
+        std::env::set_var("PATH", &new_path);
+        log::info!("[install] {} 安装后刷新 PATH ({} 个条目)", tool, paths.len());
+    }
+}
+
+/// 从 Windows 注册表读取 PATH 值
+#[cfg(target_os = "windows")]
+fn read_registry_path(key_path: &str, is_hklm: bool) -> String {
+    use winreg::enums::*;
+    use winreg::RegKey;
+
+    let root = if is_hklm { HKEY_LOCAL_MACHINE } else { HKEY_CURRENT_USER };
+    let root_key = RegKey::predef(root);
+    match root_key.open_subkey_with_flags(key_path, KEY_READ) {
+        Ok(k) => k.get_value::<String, _>("Path").unwrap_or_default(),
+        Err(_) => String::new(),
+    }
+}
+
 /// 使用 winget/npm 安装工具（带进度事件）
 /// uninstall_first=true: 先卸载再安装（重装场景）
 /// uninstall_first=false: 直接安装（首次安装场景）
@@ -630,14 +749,8 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                     steps.push(("rm npm-cache",  vec!["__rm_dir__", r"__APPDATA__\npm-cache"]));
                     steps
                 }
-            "python" => vec![
-                ("winget python313",vec!["cmd", "/C", "winget", "uninstall", "Python.Python.3.13", "--silent"]),
-                ("winget python312",vec!["cmd", "/C", "winget", "uninstall", "Python.Python.3.12", "--silent"]),
-                ("winget python311",vec!["cmd", "/C", "winget", "uninstall", "Python.Python.3.11", "--silent"]),
-                ("winget python310",vec!["cmd", "/C", "winget", "uninstall", "Python.Python.3.10", "--silent"]),
-                ("rm python dir",   vec!["__rm_dir__", r"__LOCALAPPDATA__\Programs\Python"]),
-                ("rm appdata python",vec!["__rm_dir__", r"__APPDATA__\Python"]),
-            ],
+            // python 不卸载，winget install --force 会覆盖安装
+            "python" => vec![],
             "git" => vec![
                 ("winget git",   vec!["cmd", "/C", "winget", "uninstall", "Git.Git", "--silent"]),
                 ("rm git dir",   vec!["__rm_dir__", r"C:\Program Files\Git"]),
@@ -684,7 +797,10 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                 let ok = if exists { std::fs::remove_file(path).is_ok() } else { true };
                 append_install_log(&tool, ok, &format!("[卸载:{}] 删除文件 '{}' (存在: {})", label, p, exists));
             } else {
-                let _ = run_cmd_logged(&tool, &format!("卸载:{}", label), args[0], &args[1..], &path);
+                // winget 卸载时，"未找到包"(-1978335212) 视为成功
+                let is_winget_uninstall = args.len() > 2 && args[1] == "/C" && args.get(2) == Some(&"winget") && args.get(3) == Some(&"uninstall");
+                let accept: &[i32] = if is_winget_uninstall { &[-1978335212] } else { &[] };
+                let _ = run_cmd_logged_with_accept(&tool, &format!("卸载:{}", label), args[0], &args[1..], &path, accept);
             }
         }
 
@@ -803,15 +919,43 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
         *running.lock().unwrap() = false;
         let _ = timer.join();
 
-        let success = status.as_ref().map(|s| s.success()).unwrap_or(false);
+        let mut success = status.as_ref().map(|s| s.success()).unwrap_or(false);
         let exit_code = status.ok().and_then(|s| s.code()).unwrap_or(-1);
         let stdout_content = stdout_log.lock().unwrap().clone();
         let stderr_content = stderr_log.lock().unwrap().clone();
 
+        // "已安装相同或更高版本" 视为成功
+        if !success && exit_code == -1978335189 {
+            success = true;
+            append_install_log(&tool, true, &format!("已安装相同或更高版本 (退出码: {})", exit_code));
+        }
+
+        // Python: winget 失败时尝试直接下载安装程序（绕过组织策略）
+        if !success && tool == "python" {
+            let policy_codes = [-1978334961i32, -1978335184]; // 组织策略阻止 / 安装程序正在运行
+            if policy_codes.contains(&exit_code) {
+                append_install_log(&tool, true, "[回退] winget 安装失败，尝试直接下载安装程序...");
+                let fallback_ok = install_python_direct_fallback(&path, &window);
+                if fallback_ok {
+                    success = true;
+                    append_install_log(&tool, true, "[回退] 直接安装成功");
+                } else {
+                    append_install_log(&tool, false, "[回退] 直接安装也失败了");
+                }
+            }
+        }
+
         let msg = if success {
             "安装成功".to_string()
         } else {
-            format!("安装失败 (退出码: {})", exit_code)
+            let reason = match exit_code {
+                -1978334961 => "组织策略阻止安装，请以管理员身份运行或联系 IT 管理员",
+                -1978335184 => "安装程序正在运行，请稍后重试",
+                -1978335189 => "已安装相同或更高版本",
+                -1978335212 => "未找到匹配的程序包",
+                _ => "安装失败",
+            };
+            format!("{} (退出码: {})", reason, exit_code)
         };
         append_install_log(&tool, success, &msg);
 
@@ -821,6 +965,11 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
         }
         if !stderr_content.trim().is_empty() {
             append_install_log(&tool, false, &format!("[安装:stderr]\n{}", stderr_content.trim()));
+        }
+
+        // 安装成功后刷新 PATH，确保后续检测能找到新安装的工具
+        if success {
+            refresh_path_after_install(&tool);
         }
 
         let _ = window.emit("install_progress", serde_json::json!({
@@ -1306,6 +1455,17 @@ fn debug_env_inner() -> String {
         Err(e) => log_line("cmd /C git --version", &format!("错误: {}", e)),
     }
 
+    // python
+    log_line("--- python ---", "");
+    match { let mut c = Command::new("cmd"); c.creation_flags(0x08000000); c }.args(["/C", "python", "--version"]).env("PATH", &shell_path).output() {
+        Ok(o) => log_line("cmd /C python --version", &format!("exit={:?} stdout=[{}] stderr=[{}]", o.status.code(), String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim())),
+        Err(e) => log_line("cmd /C python --version", &format!("错误: {}", e)),
+    }
+    match { let mut c = Command::new("cmd"); c.creation_flags(0x08000000); c }.args(["/C", "py", "--version"]).env("PATH", &shell_path).output() {
+        Ok(o) => log_line("cmd /C py --version", &format!("exit={:?} stdout=[{}] stderr=[{}]", o.status.code(), String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim())),
+        Err(e) => log_line("cmd /C py --version", &format!("错误: {}", e)),
+    }
+
     // claude
     log_line("--- claude ---", "");
     match { let mut c = Command::new("cmd"); c.creation_flags(0x08000000); c }.args(["/C", "claude", "--version"]).env("PATH", &shell_path).output() {
@@ -1397,7 +1557,7 @@ fn debug_env_inner() -> String {
 
     // which 检测
     log_line("--- which 检测 ---", "");
-    for tool in &["node", "npm", "git", "python3", "code", "claude"] {
+    for tool in &["node", "npm", "git", "python3", "py", "code", "claude"] {
         match which::which(tool) {
             Ok(p) => log_line(&format!("which({})", tool), &p.display().to_string()),
             Err(e) => log_line(&format!("which({})", tool), &format!("未找到: {}", e)),
@@ -1411,6 +1571,7 @@ fn debug_env_inner() -> String {
         ("npm", "npm", vec!["--version"]),
         ("git", "git", vec!["--version"]),
         ("python3", "python3", vec!["--version"]),
+        ("py", "py", vec!["--version"]),
         ("claude", "claude", vec!["--version"]),
     ] {
         match Command::new(cmd).args(&args).env("PATH", &shell_path).output() {
