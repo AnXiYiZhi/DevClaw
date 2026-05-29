@@ -26,6 +26,7 @@ import {
   Shield,
   Cpu,
   LayoutDashboard,
+  ClipboardCheck,
 } from "lucide-react";
 import { getCurrentWindow } from "@tauri-apps/api/window";
 import type { Provider, VisibleApps } from "@/types";
@@ -77,6 +78,7 @@ import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { ActivationPage } from "@/components/Activation";
+import { EnvCheck } from "@/components/EnvCheck";
 import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
@@ -107,7 +109,8 @@ type View =
   | "openclawTools"
   | "openclawAgents"
   | "hermesMemory"
-  | "activation";
+  | "activation"
+  | "envCheck";
 
 interface WebDavSyncStatusUpdatedPayload {
   source?: string;
@@ -154,6 +157,7 @@ const VALID_VIEWS: View[] = [
   "openclawAgents",
   "hermesMemory",
   "activation",
+  "envCheck",
 ];
 
 const getInitialView = (): View => {
@@ -179,6 +183,7 @@ function App() {
   // License gate
   const [licenseValid, setLicenseValid] = useState(false);
   const [licenseChecked, setLicenseChecked] = useState(false);
+  const [envCheckDone, setEnvCheckDone] = useState(false);
 
   useEffect(() => {
     invoke<boolean>("check_license")
@@ -882,6 +887,8 @@ function App() {
           );
         case "hermesMemory":
           return <HermesMemoryPanel />;
+        case "envCheck":
+          return <EnvCheck onDone={() => setCurrentView("providers")} />;
         case "skills":
           return (
             <UnifiedSkillsPanel
@@ -1042,6 +1049,10 @@ function App() {
     );
   }
 
+  if (!envCheckDone) {
+    return <EnvCheck onDone={() => setEnvCheckDone(true)} />;
+  }
+
   return (
     <div
       className="flex flex-col h-screen overflow-hidden bg-background text-foreground selection:bg-primary/30 pb-4"
@@ -1179,6 +1190,7 @@ function App() {
                   {currentView === "openclawAgents" &&
                     t("openclaw.agents.title")}
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
+                  {currentView === "envCheck" && "环境检测"}
                 </h1>
               </div>
             ) : (
@@ -1209,6 +1221,15 @@ function App() {
                   className="hover:bg-black/5 dark:hover:bg-white/5"
                 >
                   <Settings className="w-4 h-4" />
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  onClick={() => setCurrentView("envCheck")}
+                  title="环境检测"
+                  className="hover:bg-black/5 dark:hover:bg-white/5"
+                >
+                  <ClipboardCheck className="w-4 h-4" />
                 </Button>
                 <UpdateBadge
                   onClick={() => {

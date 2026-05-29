@@ -109,6 +109,7 @@ export function ActivationPage({ onActivated }: ActivationPageProps) {
             激活码
           </label>
           <Input
+            type="password"
             value={activationCode}
             onChange={(e) => setActivationCode(e.target.value)}
             placeholder="粘贴你的激活码"

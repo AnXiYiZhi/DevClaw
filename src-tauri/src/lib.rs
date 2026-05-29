@@ -1379,6 +1379,12 @@ pub fn run() {
             license::get_device_id,
             license::verify_license,
             license::check_license,
+            // Env check
+            commands::check_env,
+            commands::check_single_env,
+            commands::check_npm_available,
+            commands::install_tool,
+            commands::debug_env,
         ]);
 
     let app = builder
