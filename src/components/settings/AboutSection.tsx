@@ -363,7 +363,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
 
   const handleCheckUpdate = useCallback(async () => {
     if (hasUpdate) {
-      await settingsApi.openExternal("https://devclaw.ccwu.cc");
+      await settingsApi.openExternal("https://devclaw.cc.cd");
       return;
     }
 
@@ -744,7 +744,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
               type="button"
               variant="outline"
               size="sm"
-              onClick={() => settingsApi.openExternal("https://devclaw.ccwu.cc")}
+              onClick={() => settingsApi.openExternal("https://devclaw.cc.cd")}
               className="h-8 gap-1.5 text-xs"
             >
               <Globe className="h-3.5 w-3.5" />

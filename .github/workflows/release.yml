@@ -30,19 +30,37 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          VERSION="${GITHUB_REF_NAME}"
-          VERSION="${VERSION#v}"
+          VERSION="${GITHUB_REF_NAME#v}"
           echo "Syncing version: $VERSION"
-          # tauri.conf.json
-          jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
-          # Cargo.toml
-          sed -i'' "s/^version = .*/version = \"$VERSION\"/" src-tauri/Cargo.toml
-          # package.json (top-level only)
-          jq --arg v "$VERSION" '.version = $v' package.json > tmp.json && mv tmp.json package.json
+          python -c "
+          from pathlib import Path
+          import re, json
+
+          version = '$VERSION'
+
+          # src-tauri/Cargo.toml
+          cargo = Path('src-tauri/Cargo.toml')
+          cargo.write_text(
+              re.sub(r'^version\s*=\s*\".*?\"', f'version = \"{version}\"', cargo.read_text(encoding='utf-8'), count=1, flags=re.MULTILINE),
+              encoding='utf-8'
+          )
+
+          # package.json
+          pkg = Path('package.json')
+          data = json.loads(pkg.read_text(encoding='utf-8'))
+          data['version'] = version
+          pkg.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+
+          # src-tauri/tauri.conf.json
+          conf = Path('src-tauri/tauri.conf.json')
+          data = json.loads(conf.read_text(encoding='utf-8'))
+          data['version'] = version
+          conf.write_text(json.dumps(data, indent=2, ensure_ascii=False) + '\n', encoding='utf-8')
+          "
           echo "Done. Verifying:"
-          jq -r '.version' src-tauri/tauri.conf.json
           grep '^version' src-tauri/Cargo.toml
-          jq -r '.version' package.json
+          python -c "import json; print(json.load(open('package.json'))['version'])"
+          python -c "import json; print(json.load(open('src-tauri/tauri.conf.json'))['version'])"
 
       - name: Setup Node.js
         uses: actions/setup-node@v6

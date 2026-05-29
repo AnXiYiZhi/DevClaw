@@ -110,7 +110,7 @@ export async function checkForUpdate(
       date: info.pubDate,
       async downloadAndInstall() {
         // No auto-download — direct user to website
-        window.open("https://devclaw.ccwu.cc", "_blank");
+        window.open("https://devclaw.cc.cd", "_blank");
       },
     };
 
