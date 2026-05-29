@@ -5,37 +5,114 @@ use std::process::Command;
 fn get_shell_path() -> String {
     let current = std::env::var("PATH").unwrap_or_default();
 
-    #[cfg(target_os = "macos")]
+    #[cfg(not(target_os = "windows"))]
     {
-        if let Ok(output) = Command::new("/bin/zsh")
-            .args(["-l", "-c", "echo $PATH"])
-            .output()
-        {
-            if output.status.success() {
-                let shell_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !shell_path.is_empty() {
-                    return format!("{}:{}", shell_path, current);
-                }
-            }
-        }
-    }
+        // 多种方式获取 PATH，按优先级尝试
+        let shell_path = get_shell_path_from_login_shell()
+            .or_else(get_shell_path_from_env_file);
 
-    #[cfg(target_os = "linux")]
-    {
-        if let Ok(output) = Command::new("/bin/bash")
-            .args(["-l", "-c", "echo $PATH"])
-            .output()
-        {
-            if output.status.success() {
-                let shell_path = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !shell_path.is_empty() {
-                    return format!("{}:{}", shell_path, current);
+        if let Some(sp) = shell_path {
+            if !sp.is_empty() {
+                // 去重合并：shell PATH 优先，追加 current 中不重复的部分
+                let mut seen = std::collections::HashSet::new();
+                let mut merged = String::new();
+                for p in sp.split(':').chain(current.split(':')) {
+                    if !p.is_empty() && seen.insert(p.to_string()) {
+                        if !merged.is_empty() {
+                            merged.push(':');
+                        }
+                        merged.push_str(p);
+                    }
                 }
+                return merged;
             }
         }
     }
 
     current
+}
+
+/// 从 login shell 获取 PATH
+#[cfg(not(target_os = "windows"))]
+fn get_shell_path_from_login_shell() -> Option<String> {
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "/bin/zsh".to_string());
+    let output = Command::new(&shell)
+        .args(["-l", "-c", "echo $PATH"])
+        .output()
+        .ok()?;
+    if output.status.success() {
+        let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        if !path.is_empty() {
+            log::debug!("[env_check] 从 login shell ({}) 获取 PATH 成功", shell);
+            return Some(path);
+        }
+    }
+    // 回退到 zsh
+    if shell != "/bin/zsh" {
+        let output = Command::new("/bin/zsh")
+            .args(["-l", "-c", "echo $PATH"])
+            .output()
+            .ok()?;
+        if output.status.success() {
+            let path = String::from_utf8_lossy(&output.stdout).trim().to_string();
+            if !path.is_empty() {
+                log::debug!("[env_check] 从 /bin/zsh 回退获取 PATH 成功");
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+/// 从 shell 配置文件中提取 PATH 设置
+#[cfg(not(target_os = "windows"))]
+fn get_shell_path_from_env_file() -> Option<String> {
+    let home = std::env::var("HOME").ok()?;
+    let config_files = [
+        format!("{}/.zshrc", home),
+        format!("{}/.zprofile", home),
+        format!("{}/.bashrc", home),
+        format!("{}/.bash_profile", home),
+        format!("{}/.profile", home),
+    ];
+
+    let mut extra_paths = Vec::new();
+    for file in &config_files {
+        if let Ok(content) = std::fs::read_to_string(file) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                // 匹配 export PATH=... 或 PATH=...
+                if let Some(rest) = trimmed.strip_prefix("export ").or(Some(trimmed)) {
+                    let rest = rest.trim();
+                    if rest.starts_with("PATH") && rest.contains('=') {
+                        // 提取 PATH 值
+                        if let Some(eq_pos) = rest.find('=') {
+                            let val = rest[eq_pos + 1..].trim();
+                            // 处理 $PATH 引用，提取新增路径
+                            for part in val.replace("$PATH", "").replace("${PATH}", "").split(':') {
+                                let p = part.trim().trim_matches('"').trim_matches('\'');
+                                if !p.is_empty() && p.starts_with('/') {
+                                    extra_paths.push(p.to_string());
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if extra_paths.is_empty() {
+        return None;
+    }
+    log::debug!("[env_check] 从 shell 配置文件提取到额外 PATH: {:?}", extra_paths);
+    let current = std::env::var("PATH").unwrap_or_default();
+    let mut merged = extra_paths.join(":");
+    if !current.is_empty() {
+        merged.push(':');
+        merged.push_str(&current);
+    }
+    Some(merged)
 }
 
 /// Windows: 通过 cmd /C 执行命令，正确处理 .cmd/.bat 文件
@@ -502,9 +579,92 @@ pub fn debug_env() -> String {
     out
 }
 
-/// 调试命令
+/// 调试命令 (macOS / Linux)
 #[cfg(not(target_os = "windows"))]
 #[tauri::command]
 pub fn debug_env() -> String {
-    "debug_env: 仅支持 Windows 平台".to_string()
+    let mut out = String::new();
+    let mut log_line = |label: &str, msg: &str| {
+        let line = format!("[{}] {}", label, msg);
+        eprintln!("{}", line);
+        out.push_str(&line);
+        out.push('\n');
+    };
+
+    log_line("=== debug_env ===", "");
+
+    // 进程 PATH
+    let proc_path = std::env::var("PATH").unwrap_or_else(|e| format!("<读取失败: {}>", e));
+    log_line("进程PATH", &proc_path);
+
+    // SHELL 环境变量
+    let shell = std::env::var("SHELL").unwrap_or_else(|_| "<未设置>".to_string());
+    log_line("SHELL", &shell);
+
+    // login shell PATH
+    let shell_path = get_shell_path();
+    log_line("合并后PATH", &shell_path);
+    let path_count = shell_path.split(':').filter(|p| !p.is_empty()).count();
+    log_line("PATH目录数", &path_count.to_string());
+
+    // which 检测
+    log_line("--- which 检测 ---", "");
+    for tool in &["node", "npm", "git", "python3", "code", "claude"] {
+        match which::which(tool) {
+            Ok(p) => log_line(&format!("which({})", tool), &p.display().to_string()),
+            Err(e) => log_line(&format!("which({})", tool), &format!("未找到: {}", e)),
+        }
+    }
+
+    // 直接命令执行
+    log_line("--- 命令执行 ---", "");
+    for (name, cmd, args) in [
+        ("node", "node", vec!["--version"]),
+        ("npm", "npm", vec!["--version"]),
+        ("git", "git", vec!["--version"]),
+        ("python3", "python3", vec!["--version"]),
+        ("claude", "claude", vec!["--version"]),
+    ] {
+        match Command::new(cmd).args(&args).env("PATH", &shell_path).output() {
+            Ok(o) => log_line(
+                &format!("{} --version", name),
+                &format!(
+                    "exit={:?} stdout=[{}] stderr=[{}]",
+                    o.status.code(),
+                    String::from_utf8_lossy(&o.stdout).trim(),
+                    String::from_utf8_lossy(&o.stderr).trim()
+                ),
+            ),
+            Err(e) => log_line(&format!("{} --version", name), &format!("错误: {}", e)),
+        }
+    }
+
+    // 关键 shell 配置文件
+    log_line("--- shell 配置文件 ---", "");
+    let home = std::env::var("HOME").unwrap_or_default();
+    for f in &[
+        format!("{}/.zshrc", home),
+        format!("{}/.zprofile", home),
+        format!("{}/.bashrc", home),
+        format!("{}/.bash_profile", home),
+        format!("{}/.profile", home),
+    ] {
+        if std::path::Path::new(f).exists() {
+            let path_lines = std::fs::read_to_string(f)
+                .map(|c| {
+                    c.lines()
+                        .filter(|l| l.contains("PATH"))
+                        .take(5)
+                        .collect::<Vec<_>>()
+                        .join(" | ")
+                })
+                .unwrap_or_else(|e| format!("读取失败: {}", e));
+            log_line(&format!("存在: {}", f), &path_lines);
+        } else {
+            log_line(f, "不存在");
+        }
+    }
+
+    log_line("=== debug_env 结束 ===", "");
+    out
 }
