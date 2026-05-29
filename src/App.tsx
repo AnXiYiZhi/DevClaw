@@ -76,6 +76,7 @@ import UnifiedSkillsPanel from "@/components/skills/UnifiedSkillsPanel";
 import { DeepLinkImportDialog } from "@/components/DeepLinkImportDialog";
 import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
+import { ActivationPage } from "@/components/Activation";
 import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
@@ -105,7 +106,8 @@ type View =
   | "openclawEnv"
   | "openclawTools"
   | "openclawAgents"
-  | "hermesMemory";
+  | "hermesMemory"
+  | "activation";
 
 interface WebDavSyncStatusUpdatedPayload {
   source?: string;
@@ -151,6 +153,7 @@ const VALID_VIEWS: View[] = [
   "openclawTools",
   "openclawAgents",
   "hermesMemory",
+  "activation",
 ];
 
 const getInitialView = (): View => {
@@ -172,6 +175,21 @@ function App() {
   const [settingsDefaultTab, setSettingsDefaultTab] = useState("general");
   const [isAddOpen, setIsAddOpen] = useState(false);
   const [isWindowMaximized, setIsWindowMaximized] = useState(false);
+
+  // License gate
+  const [licenseValid, setLicenseValid] = useState(false);
+  const [licenseChecked, setLicenseChecked] = useState(false);
+
+  useEffect(() => {
+    invoke<boolean>("check_license")
+      .then((ok) => {
+        setLicenseValid(ok);
+        setLicenseChecked(true);
+      })
+      .catch(() => {
+        setLicenseChecked(true);
+      });
+  }, []);
 
   useEffect(() => {
     localStorage.setItem(VIEW_STORAGE_KEY, currentView);
@@ -1001,6 +1019,29 @@ function App() {
     );
   };
 
+  // License gate: show loading or activation page before main app
+  if (!licenseChecked) {
+    return (
+      <div className="flex items-center justify-center h-screen w-screen bg-background">
+        <div className="flex flex-col items-center gap-3">
+          <div className="w-8 h-8 border-2 border-muted-foreground/30 border-t-foreground rounded-full animate-spin" />
+          <span className="text-sm text-muted-foreground">正在验证授权...</span>
+        </div>
+      </div>
+    );
+  }
+
+  if (!licenseValid) {
+    return (
+      <ActivationPage
+        onActivated={() => {
+          setLicenseValid(true);
+          setCurrentView("providers");
+        }}
+      />
+    );
+  }
+
   return (
     <div
       className="flex flex-col h-screen overflow-hidden bg-background text-foreground selection:bg-primary/30 pb-4"
@@ -1154,7 +1195,7 @@ function App() {
                         : "text-blue-500 hover:text-blue-600 dark:text-blue-400 dark:hover:text-blue-300",
                     )}
                   >
-                    CC Switch
+                    DevClaw
                   </a>
                 </div>
                 <Button

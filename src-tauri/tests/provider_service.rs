@@ -314,7 +314,7 @@ requires_openai_auth = true
     assert_eq!(
         parsed.get("model_provider").and_then(|v| v.as_str()),
         Some("custom"),
-        "live Codex third-party model_provider should use the CC Switch history bucket"
+        "live Codex third-party model_provider should use the DevClaw history bucket"
     );
 
     let model_providers = parsed
