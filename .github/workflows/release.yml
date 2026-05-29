@@ -361,3 +361,51 @@ jobs:
         run: |
           set -euxo pipefail
           gh release upload "$GITHUB_REF_NAME" latest.json --clobber --repo "$GITHUB_REPOSITORY"
+
+  upload-to-worker:
+    name: Upload to DevClawWorker
+    runs-on: ubuntu-22.04
+    needs: publish-release
+    steps:
+      - name: Download release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euxo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p dl
+          gh release download "$TAG" --dir dl --repo "$GITHUB_REPOSITORY" \
+            --pattern "*Portable*" --pattern "*.dmg"
+          ls -la dl
+
+      - name: Upload Windows Portable ZIP
+        run: |
+          set -euxo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          ZIP=$(find dl -name "*Portable*.zip" | head -1)
+          if [ -z "$ZIP" ]; then
+            echo "No portable zip found, skipping"
+            exit 0
+          fi
+          echo "Uploading $ZIP as version $VERSION..."
+          curl -f -X POST "https://devclaw.ccwu.cc/api/upload/windows?version=${VERSION}" \
+            -H "Authorization: Bearer ${{ secrets.DEVCLAWWORKER_UPLOAD_TOKEN }}" \
+            -H "Content-Type: application/zip" \
+            --data-binary "@${ZIP}"
+          echo "Windows upload done"
+
+      - name: Upload macOS DMG
+        run: |
+          set -euxo pipefail
+          VERSION="${GITHUB_REF_NAME#v}"
+          DMG=$(find dl -name "*.dmg" | head -1)
+          if [ -z "$DMG" ]; then
+            echo "No DMG found, skipping"
+            exit 0
+          fi
+          echo "Uploading $DMG as version $VERSION..."
+          curl -f -X POST "https://devclaw.ccwu.cc/api/upload/macos?version=${VERSION}" \
+            -H "Authorization: Bearer ${{ secrets.DEVCLAWWORKER_UPLOAD_TOKEN }}" \
+            -H "Content-Type: application/octet-stream" \
+            --data-binary "@${DMG}"
+          echo "macOS upload done"
