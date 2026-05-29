@@ -79,6 +79,7 @@ import { FirstRunNoticeDialog } from "@/components/FirstRunNoticeDialog";
 import { AgentsPanel } from "@/components/agents/AgentsPanel";
 import { ActivationPage } from "@/components/Activation";
 import { EnvCheck } from "@/components/EnvCheck";
+import { ClaudeProxy } from "@/components/ClaudeProxy";
 import { UniversalProviderPanel } from "@/components/universal";
 import { McpIcon } from "@/components/BrandIcons";
 import { Button } from "@/components/ui/button";
@@ -110,7 +111,8 @@ type View =
   | "openclawAgents"
   | "hermesMemory"
   | "activation"
-  | "envCheck";
+  | "envCheck"
+  | "claudeProxy";
 
 interface WebDavSyncStatusUpdatedPayload {
   source?: string;
@@ -158,11 +160,14 @@ const VALID_VIEWS: View[] = [
   "hermesMemory",
   "activation",
   "envCheck",
+  "claudeProxy",
 ];
+
+const TRANSIENT_VIEWS: View[] = ["envCheck", "claudeProxy"];
 
 const getInitialView = (): View => {
   const saved = localStorage.getItem(VIEW_STORAGE_KEY) as View | null;
-  if (saved && VALID_VIEWS.includes(saved)) {
+  if (saved && VALID_VIEWS.includes(saved) && !TRANSIENT_VIEWS.includes(saved)) {
     return saved;
   }
   return "providers";
@@ -183,7 +188,15 @@ function App() {
   // License gate
   const [licenseValid, setLicenseValid] = useState(false);
   const [licenseChecked, setLicenseChecked] = useState(false);
-  const [envCheckDone, setEnvCheckDone] = useState(false);
+  const [envCheckDone, setEnvCheckDone] = useState(() => {
+    return localStorage.getItem("cc-switch-env-check-done") === "true";
+  });
+
+  useEffect(() => {
+    if (envCheckDone) {
+      localStorage.setItem("cc-switch-env-check-done", "true");
+    }
+  }, [envCheckDone]);
 
   useEffect(() => {
     invoke<boolean>("check_license")
@@ -197,7 +210,10 @@ function App() {
   }, []);
 
   useEffect(() => {
-    localStorage.setItem(VIEW_STORAGE_KEY, currentView);
+    // envCheck is a transient view — don't persist it as "last view"
+    if (currentView !== "envCheck") {
+      localStorage.setItem(VIEW_STORAGE_KEY, currentView);
+    }
   }, [currentView]);
 
   const { data: settingsData } = useSettingsQuery();
@@ -593,7 +609,13 @@ function App() {
       if (isTextEditableTarget(event.target)) return;
 
       event.preventDefault();
-      setCurrentView(view === "skillsDiscovery" ? "skills" : "providers");
+      setCurrentView(
+        view === "skillsDiscovery"
+          ? "skills"
+          : view === "claudeProxy"
+            ? "envCheck"
+            : "providers",
+      );
     };
 
     window.addEventListener("keydown", handleKeyDown);
@@ -888,7 +910,14 @@ function App() {
         case "hermesMemory":
           return <HermesMemoryPanel />;
         case "envCheck":
-          return <EnvCheck onDone={() => setCurrentView("providers")} />;
+          return (
+            <EnvCheck
+              onDone={() => setCurrentView("providers")}
+              onNavigate={(view) => setCurrentView(view as View)}
+            />
+          );
+        case "claudeProxy":
+          return <ClaudeProxy />;
         case "skills":
           return (
             <UnifiedSkillsPanel
@@ -1050,7 +1079,15 @@ function App() {
   }
 
   if (!envCheckDone) {
-    return <EnvCheck onDone={() => setEnvCheckDone(true)} />;
+    return (
+      <EnvCheck
+        onDone={() => setEnvCheckDone(true)}
+        onNavigate={(view) => {
+          setEnvCheckDone(true);
+          setCurrentView(view as View);
+        }}
+      />
+    );
   }
 
   return (
@@ -1155,20 +1192,24 @@ function App() {
           >
             {currentView !== "providers" ? (
               <div className="flex items-center gap-2">
-                <Button
-                  variant="outline"
-                  size="icon"
-                  onClick={() =>
-                    setCurrentView(
-                      currentView === "skillsDiscovery"
-                        ? "skills"
-                        : "providers",
-                    )
-                  }
-                  className="mr-2 rounded-lg"
-                >
-                  <ArrowLeft className="w-4 h-4" />
-                </Button>
+                {currentView !== "envCheck" && (
+                  <Button
+                    variant="outline"
+                    size="icon"
+                    onClick={() =>
+                      setCurrentView(
+                        currentView === "skillsDiscovery"
+                          ? "skills"
+                          : currentView === "claudeProxy"
+                            ? "envCheck"
+                            : "providers",
+                      )
+                    }
+                    className="mr-2 rounded-lg"
+                  >
+                    <ArrowLeft className="w-4 h-4" />
+                  </Button>
+                )}
                 <h1 className="text-lg font-semibold">
                   {currentView === "settings" && t("settings.title")}
                   {currentView === "prompts" &&
@@ -1191,13 +1232,14 @@ function App() {
                     t("openclaw.agents.title")}
                   {currentView === "hermesMemory" && t("hermes.memory.title")}
                   {currentView === "envCheck" && "环境检测"}
+                  {currentView === "claudeProxy" && "Claude CLI 代理配置"}
                 </h1>
               </div>
             ) : (
               <div className="flex items-center gap-2">
                 <div className="relative inline-flex items-center">
                   <a
-                    href="https://ccswitch.io"
+                    href="https://devclaw.ccwu.cc"
                     target="_blank"
                     rel="noreferrer"
                     className={cn(
@@ -1257,7 +1299,7 @@ function App() {
             )}
           </div>
 
-          <div className="flex flex-1 min-w-0 items-center justify-end gap-1.5">
+          <div className="flex flex-1 min-w-0 overflow-hidden items-center justify-end gap-1.5">
             {currentView === "providers" &&
               activeApp !== "opencode" &&
               activeApp !== "openclaw" &&

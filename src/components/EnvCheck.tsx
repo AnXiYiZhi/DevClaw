@@ -1,11 +1,15 @@
 import { useEffect, useState, useCallback } from "react";
 import { motion } from "framer-motion";
+import {
+  isWindows,
+  isLinux,
+  DRAG_REGION_ATTR,
+  DRAG_REGION_STYLE,
+} from "@/lib/platform";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import {
   Loader2,
-  CheckCircle2,
-  AlertCircle,
   ExternalLink,
   ArrowRight,
   Monitor,
@@ -17,11 +21,23 @@ import {
   Stethoscope,
   SquareCheck,
   Square,
+  Settings,
+  FileText,
+  FolderOpen,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import iconNodejs from "@/assets/icons/nodejs.svg";
+import iconNpm from "@/assets/icons/npm.svg";
+import iconGit from "@/assets/icons/git.svg";
+import iconPython from "@/assets/icons/python.svg";
+import iconVscode from "@/assets/icons/vscode.svg";
+import iconChrome from "@/assets/icons/chrome.svg";
+// Claude SVG embedded as data URL (file import may fail in Tauri webview)
+const CLAUDE_ICON_DATA_URL = "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCI+PHBhdGggZmlsbD0iI0Q5Nzc1NyIgZD0ibTQuNzE0NCAxNS45NTU1IDQuNzE3NC0yLjY0NzEuMDc5LS4yMzA3LS4wNzktLjEyNzVoLS4yMzA3bC0uNzg5My0uMDQ4Ni0yLjY5NTYtLjA3MjktMi4zMzc1LS4wOTcxLTIuMjY0Ni0uMTIxNC0uNTcwNy0uMTIxNS0uNTM0My0uNzA0Mi4wNTQ2LS4zNTIyLjQ3OTctLjMyMTguNjg2LjA2MDggMS41MTc5LjEwMzIgMi4yNzY3LjE1NzggMS42NTE0LjA5NzIgMi40NDY4LjI1NWguMzg4NmwuMDU0Ni0uMTU3OS0uMTMzNi0uMDk3MS0uMTAzMi0uMDk3Mkw2Ljk3MyA5LjgzNTZsLTIuNTUtMS42ODc5LTEuMzM1Ni0uOTcxNC0uNzIyNS0uNDkxOC0uMzY0My0uNDYxNC0uMTU3OC0xLjAwNzguNjU1Ny0uNzIyNS44ODAzLjA2MDcuMjI0Ni4wNjA3Ljg5MjUuNjg2IDEuOTA2NCAxLjQ3NTQgMi40ODkzIDEuODMzNi4zNjQzLjMwMzUuMTQ1Ny0uMTAzMi4wMTgyLS4wNzI4LS4xNjQtLjI3MzMtMS4zNTM5LTIuNDQ2Ny0xLjQ0NS0yLjQ4OTMtLjY0MzUtMS4wMzItLjE3LS42MTk0Yy0uMDYwNy0uMjU1LS4xMDMyLS40Njc0LS4xMDMyLS43Mjg1TDYuMjg3LjEzMzUgNi42OTk3IDBsLjk5NTcuMTMzNi40MTkuMzY0Mi42MTkyIDEuNDE0NyAxLjAwMTggMi4yMjgyIDEuNTU0MyAzLjAyOTYuNDU1My44OTg1LjI0MjkuODMxOC4wOTEuMjU1aC4xNTc5di0uMTQ1N2wuMTI3NS0xLjcwNi4yMzY4LTIuMDk0Ny4yMzA3LTIuNjk1Ny4wNzg5LS43NTg5LjM3NjQtLjkxMDcuNzQ2OC0uNDkxOC41ODI4LjI3OTMuNDc5Ny42ODYtLjA2NjguNDQzMy0uMjg1MyAxLjg1MTctLjU1ODYgMi45MDIxLS4zNjQzIDEuOTQyOWguMjEyNWwuMjQyOS0uMjQyOS45ODM1LTEuMzA1MyAxLjY1MTQtMi4wNjQzLjcyODYtLjgxOTYuODUtLjkwNDYuNTQ2NC0uNDMxMWgxLjAzMjFsLjc1OSAxLjEyOTMtLjM0IDEuMTY1Ny0xLjA2MjUgMS4zNDc4LS44ODA0IDEuMTQxNC0xLjI2MjggMS43LS43ODkzIDEuMzYuMDcyOS4xMDkzLjE4ODItLjAxODMgMi44NTM1LS42MDcgMS41NDIxLS4yNzk0IDEuODM5Ni0uMzE1Ny44MzE4LjM4ODYuMDkxLjM5NDYtLjMyNzguODA3NS0xLjk2Ny40ODU3LTIuMzA3Mi40NjE0LTMuNDM2NC44MTM2LS4wNDI1LjAzMDQuMDQ4Ni4wNjA3IDEuNTQ4Mi4xNDU3LjY2MTguMDM2NGgxLjYyMWwzLjAxNzUuMjI0Ny43ODkyLjUyMi40NzM2LjYzNzYtLjA3OS40ODU3LTEuMjE0Mi42MTkzLTEuNjM5My0uMzg4Ni0zLjgyNS0uOTEwNy0xLjMxMTMtLjMyNzloLS4xODIydi4xMDkzbDEuMDkyOSAxLjA2ODYgMi4wMDM1IDEuODA5MiAyLjUwNzUgMi4zMzE0LjEyNzUuNTc2OC0uMzIxOC40NTU0LS4zNC0uMDQ4Ni0yLjIwMzktMS42NTc1LS44NS0uNzQ2OC0xLjkyNDYtMS42MjFoLS4xMjc1di4xN2wuNDQzMi42NDk2IDIuMzQzNiAzLjUyMTQuMTIxNCAxLjA4MDctLjE3LjM1MjEtLjYwNzEuMjEyNS0uNjY3OS0uMTIxNC0xLjM3MjEtMS45MjQ2TDE0LjM4IDE3Ljk1OWwtMS4xNDE0LTEuOTQyOC0uMTM5Ny4wNzktLjY3NCA3LjI1NTItLjMxNTYuMzcwMy0uNzI4Ni4yNzkzLS42MDcxLS40NjE0LS4zMjE4LS43NDY4LjMyMTgtMS40NzUzLjM4ODYtMS45MjQ2LjMxNTctMS41My4yODUzLTEuOTAwNC4xNy0uNjMxNC0uMDEyMS0uMDQyNS0uMTM5Ny4wMTgyLTEuNDMyOCAxLjk2NzItMi4xNzk2IDIuOTQ0Ni0xLjcyNDMgMS44NDU2LS40MTI4LjE2NC0uNzE2NC0uMzcwNC4wNjY3LS42NjE4LjQwMDgtLjU4ODkgMi4zODYtMy4wMzU3IDEuNDM4OS0xLjg4Mi45MjktMS4wODY4LS4wMDYyLS4xNTc5aC0uMDU0NmwtNi4zMzg1IDQuMTE2NC0xLjEyOTMuMTQ1Ny0uNDg1Ny0uNDU1NC4wNjA4LS43NDY3LjIzMDctLjI0MjkgMS45MDY0LTEuMzExNFoiLz48L3N2Zz4=";
 
 interface EnvCheckProps {
   onDone: () => void;
+  onNavigate?: (view: string) => void;
 }
 
 interface EnvItem {
@@ -34,16 +50,16 @@ interface EnvItem {
 }
 
 const BASIC_ENV: EnvItem[] = [
-  { key: "nodejs", name: "Node.js", iconUrl: "https://cdn.simpleicons.org/nodedotjs", fallbackLetter: "N", fallbackColor: "#339933", downloadUrl: "https://nodejs.org" },
-  { key: "npm", name: "npm", iconUrl: "https://cdn.simpleicons.org/npm", fallbackLetter: "n", fallbackColor: "#CB3837", downloadUrl: "https://nodejs.org" },
-  { key: "git", name: "Git", iconUrl: "https://cdn.simpleicons.org/git", fallbackLetter: "G", fallbackColor: "#F05032", downloadUrl: "https://git-scm.com" },
-  { key: "python", name: "Python", iconUrl: "https://cdn.simpleicons.org/python", fallbackLetter: "P", fallbackColor: "#3776AB", downloadUrl: "https://python.org" },
+  { key: "nodejs", name: "Node.js", iconUrl: iconNodejs, fallbackLetter: "N", fallbackColor: "#339933", downloadUrl: "https://nodejs.org/en/download" },
+  { key: "npm", name: "npm", iconUrl: iconNpm, fallbackLetter: "n", fallbackColor: "#CB3837", downloadUrl: "https://nodejs.org/en/download" },
+  { key: "git", name: "Git", iconUrl: iconGit, fallbackLetter: "G", fallbackColor: "#F05032", downloadUrl: "https://git-scm.com/downloads" },
+  { key: "python", name: "Python", iconUrl: iconPython, fallbackLetter: "P", fallbackColor: "#3776AB", downloadUrl: "https://www.python.org/downloads/" },
 ];
 
 const TOOLS: EnvItem[] = [
-  { key: "vscode", name: "VS Code", iconUrl: "https://cdn.simpleicons.org/visualstudiocode", fallbackLetter: "V", fallbackColor: "#007ACC", downloadUrl: "https://code.visualstudio.com" },
-  { key: "chrome", name: "Chrome", iconUrl: "https://cdn.simpleicons.org/googlechrome", fallbackLetter: "C", fallbackColor: "#4285F4", downloadUrl: "https://chrome.google.com" },
-  { key: "claude", name: "Claude CLI", iconUrl: "", fallbackLetter: "C", fallbackColor: "#D97757", downloadUrl: "https://claude.ai/download" },
+  { key: "vscode", name: "VS Code", iconUrl: iconVscode, fallbackLetter: "V", fallbackColor: "#007ACC", downloadUrl: "https://code.visualstudio.com/Download" },
+  { key: "chrome", name: "Chrome", iconUrl: iconChrome, fallbackLetter: "C", fallbackColor: "#4285F4", downloadUrl: "https://www.google.com/chrome/" },
+  { key: "claude", name: "Claude CLI", iconUrl: CLAUDE_ICON_DATA_URL, fallbackLetter: "C", fallbackColor: "#D97757", downloadUrl: "https://claude.ai/download" },
 ];
 
 const ALL_TOOLS = [...BASIC_ENV, ...TOOLS];
@@ -72,7 +88,7 @@ function ToolIcon({ item }: { item: EnvItem }) {
   );
 }
 
-export function EnvCheck({ onDone }: EnvCheckProps) {
+export function EnvCheck({ onDone, onNavigate }: EnvCheckProps) {
   const [versions, setVersions] = useState<Record<string, string | null>>({});
   const [loading, setLoading] = useState(true);
   const [npmAvail, setNpmAvail] = useState<NpmAvailability>({ available: false, checked: false });
@@ -84,6 +100,9 @@ export function EnvCheck({ onDone }: EnvCheckProps) {
   const [debugOutput, setDebugOutput] = useState<string | null>(null);
   const [debugLoading, setDebugLoading] = useState(false);
   const [showDebug, setShowDebug] = useState(false);
+  const [logsContent, setLogsContent] = useState<string | null>(null);
+  const [logsLoading, setLogsLoading] = useState(false);
+  const [showLogs, setShowLogs] = useState(false);
 
   const fetchAll = useCallback(async () => {
     setLoading(true);
@@ -227,6 +246,32 @@ export function EnvCheck({ onDone }: EnvCheckProps) {
   const installedCount = Object.values(versions).filter(Boolean).length;
   const totalCount = ALL_TOOLS.length;
 
+  const handleViewLogs = async () => {
+    if (!showLogs && !logsContent) {
+      setLogsLoading(true);
+      try {
+        const content = await invoke<string>("get_logs_content");
+        setLogsContent(content);
+        setShowLogs(true);
+      } catch (e: any) {
+        setLogsContent(`获取失败: ${e?.toString()}`);
+        setShowLogs(true);
+      } finally {
+        setLogsLoading(false);
+      }
+    } else {
+      setShowLogs((v) => !v);
+    }
+  };
+
+  const handleOpenLogsDir = async () => {
+    try {
+      await invoke("open_logs_dir");
+    } catch {
+      // ignore
+    }
+  };
+
   const renderStatusText = (item: EnvItem) => {
     if (loading) {
       return (
@@ -333,15 +378,27 @@ export function EnvCheck({ onDone }: EnvCheckProps) {
                   </span>
                 )}
               </div>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 text-xs px-2 whitespace-nowrap gap-1"
-                onClick={() => openUrl(item.downloadUrl)}
-              >
-                <ExternalLink className="w-3.5 h-3.5" />
-                官网
-              </Button>
+              {item.key === "claude" && onNavigate ? (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs px-2 whitespace-nowrap gap-1"
+                  onClick={() => onNavigate("claudeProxy")}
+                >
+                  <Settings className="w-3.5 h-3.5" />
+                  配置
+                </Button>
+              ) : (
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs px-2 whitespace-nowrap gap-1"
+                  onClick={() => openUrl(item.downloadUrl)}
+                >
+                  <ExternalLink className="w-3.5 h-3.5" />
+                  官网
+                </Button>
+              )}
             </>
           )}
         </div>
@@ -351,6 +408,14 @@ export function EnvCheck({ onDone }: EnvCheckProps) {
 
   return (
     <div className="relative w-full h-full flex flex-col bg-background">
+      {/* Drag bar for macOS titlebar */}
+      {!isWindows() && !isLinux() && (
+        <div
+          {...DRAG_REGION_ATTR}
+          style={{ ...DRAG_REGION_STYLE, height: 28 } as any}
+          className="shrink-0"
+        />
+      )}
       <motion.div
         initial={{ opacity: 0, y: 20 }}
         animate={{ opacity: 1, y: 0 }}
@@ -365,14 +430,11 @@ export function EnvCheck({ onDone }: EnvCheckProps) {
             </div>
             <div className="flex-1 min-w-0">
               <h1 className="text-lg font-semibold text-foreground">环境检测</h1>
-              <p className="text-sm text-muted-foreground flex items-center gap-1.5 flex-wrap">
-                检测开发环境依赖的安装状态
-                {!loading && (
-                  <span className="text-muted-foreground">
-                    （{installedCount}/{totalCount} 已安装）
-                  </span>
-                )}
-              </p>
+              {!loading && (
+                <p className="text-sm text-muted-foreground">
+                  {installedCount}/{totalCount} 已安装
+                </p>
+              )}
             </div>
             <Button
               variant="outline"
@@ -385,23 +447,6 @@ export function EnvCheck({ onDone }: EnvCheckProps) {
               重新检测
             </Button>
           </div>
-
-          {/* Status bar */}
-          {!loading && (
-            <div className="flex items-center gap-2">
-              {installedCount === totalCount ? (
-                <span className="text-xs text-green-500 flex items-center gap-1">
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  所有工具已安装
-                </span>
-              ) : (
-                <span className="text-xs text-muted-foreground flex items-center gap-1">
-                  <AlertCircle className="w-3.5 h-3.5 text-yellow-500" />
-                  部分工具未安装，可点击"安装"或"官网"按钮
-                </span>
-              )}
-            </div>
-          )}
 
           {/* Two-column grid */}
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
@@ -442,6 +487,12 @@ export function EnvCheck({ onDone }: EnvCheckProps) {
             一键安装（{Object.values(selectedTools).filter(Boolean).length} 项）
           </Button>
 
+          {/* Enter button */}
+          <Button onClick={onDone} size="lg" className="w-full">
+            完成，进入 DevClaw
+            <ArrowRight className="w-4 h-4 ml-2" />
+          </Button>
+
           {/* Debug section */}
           <div className="rounded-xl border border-border bg-gradient-to-br from-card/80 to-card/40 p-4 shadow-sm">
             <button
@@ -472,11 +523,40 @@ export function EnvCheck({ onDone }: EnvCheckProps) {
             )}
           </div>
 
-          {/* Enter button */}
-          <Button onClick={onDone} size="lg" className="w-full">
-            完成，进入 DevClaw
-            <ArrowRight className="w-4 h-4 ml-2" />
-          </Button>
+          {/* Logs section */}
+          <div className="rounded-xl border border-border bg-gradient-to-br from-card/80 to-card/40 p-4 shadow-sm">
+            <div className="flex items-center justify-between">
+              <button
+                type="button"
+                onClick={handleViewLogs}
+                className="flex items-center gap-2 text-sm font-medium text-foreground transition-colors hover:text-primary"
+              >
+                <ChevronDown
+                  className={`h-4 w-4 transition-transform ${showLogs ? "" : "-rotate-90"}`}
+                />
+                <FileText className="h-4 w-4" />
+                安装日志
+                {logsLoading && <Loader2 className="h-3.5 w-3.5 animate-spin text-muted-foreground" />}
+              </button>
+              <Button
+                variant="outline"
+                size="sm"
+                className="h-7 text-xs px-2 gap-1"
+                onClick={handleOpenLogsDir}
+              >
+                <FolderOpen className="w-3.5 h-3.5" />
+                日志
+              </Button>
+            </div>
+
+            {showLogs && logsContent && (
+              <div className="mt-3 rounded-lg border border-border/60 bg-background/80 p-4">
+                <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-all leading-relaxed max-h-[600px] overflow-auto">
+                  {logsContent}
+                </pre>
+              </div>
+            )}
+          </div>
         </div>
       </motion.div>
     </div>

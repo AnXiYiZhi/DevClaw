@@ -1,10 +1,5 @@
 import { getVersion } from "@tauri-apps/api/app";
 
-// 可选导入：在未注册插件或非 Tauri 环境下，调用时会抛错，外层需做兜底
-// 我们按需加载并在运行时捕获错误，避免构建期类型问题
-// eslint-disable-next-line @typescript-eslint/consistent-type-imports
-import type { Update } from "@tauri-apps/plugin-updater";
-
 export type UpdateChannel = "stable" | "beta";
 
 export type UpdaterPhase =
@@ -24,12 +19,6 @@ export interface UpdateInfo {
   pubDate?: string;
 }
 
-export interface UpdateProgressEvent {
-  event: "Started" | "Progress" | "Finished";
-  total?: number;
-  downloaded?: number;
-}
-
 export interface UpdateHandle {
   version: string;
   notes?: string;
@@ -41,46 +30,19 @@ export interface UpdateHandle {
   install?: () => Promise<void>;
 }
 
+export interface UpdateProgressEvent {
+  event: "Started" | "Progress" | "Finished";
+  total?: number;
+  downloaded?: number;
+}
+
 export interface CheckOptions {
   timeout?: number;
   channel?: UpdateChannel;
 }
 
-function mapUpdateHandle(raw: Update): UpdateHandle {
-  return {
-    version: (raw as any).version ?? "",
-    notes: (raw as any).notes,
-    date: (raw as any).date,
-    async downloadAndInstall(onProgress?: (e: UpdateProgressEvent) => void) {
-      await (raw as any).downloadAndInstall((evt: any) => {
-        if (!onProgress) return;
-        const mapped: UpdateProgressEvent = {
-          event: evt?.event,
-        };
-        if (evt?.event === "Started") {
-          mapped.total = evt?.data?.contentLength ?? 0;
-          mapped.downloaded = 0;
-        } else if (evt?.event === "Progress") {
-          mapped.downloaded = evt?.data?.chunkLength ?? 0; // 累积由调用方完成
-        }
-        onProgress(mapped);
-      });
-    },
-    // 透传可选 API（若插件版本支持）
-    download: (raw as any).download
-      ? async () => {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-          await (raw as any).download();
-        }
-      : undefined,
-    install: (raw as any).install
-      ? async () => {
-          // eslint-disable-next-line @typescript-eslint/no-unsafe-call
-          await (raw as any).install();
-        }
-      : undefined,
-  };
-}
+const GITHUB_REPO = "AnXiYiZhi/DevCLaw";
+const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`;
 
 export async function getCurrentVersion(): Promise<string> {
   try {
@@ -90,37 +52,75 @@ export async function getCurrentVersion(): Promise<string> {
   }
 }
 
+function parseVersion(v: string): number[] {
+  return v.replace(/^v/, "").split(".").map(Number);
+}
+
+function isNewer(latest: string, current: string): boolean {
+  const l = parseVersion(latest);
+  const c = parseVersion(current);
+  for (let i = 0; i < Math.max(l.length, c.length); i++) {
+    const li = l[i] ?? 0;
+    const ci = c[i] ?? 0;
+    if (li > ci) return true;
+    if (li < ci) return false;
+  }
+  return false;
+}
+
 export async function checkForUpdate(
   opts: CheckOptions = {},
 ): Promise<
   | { status: "up-to-date" }
   | { status: "available"; info: UpdateInfo; update: UpdateHandle }
 > {
-  // 动态引入，避免在未安装插件时导致打包期问题
-  const { check } = await import("@tauri-apps/plugin-updater");
-
   const currentVersion = await getCurrentVersion();
-  const update = await check({ timeout: opts.timeout ?? 30000 } as any);
 
-  if (!update) {
-    return { status: "up-to-date" };
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), opts.timeout ?? 30000);
+
+  try {
+    const resp = await fetch(GITHUB_API_URL, {
+      signal: controller.signal,
+      headers: { Accept: "application/vnd.github.v3+json" },
+    });
+
+    if (!resp.ok) {
+      throw new Error(`GitHub API returned ${resp.status}`);
+    }
+
+    const data = await resp.json();
+    const tagName: string = data.tag_name ?? "";
+    const latestVersion = tagName.replace(/^v/, "");
+
+    if (!latestVersion || !isNewer(latestVersion, currentVersion)) {
+      return { status: "up-to-date" };
+    }
+
+    const info: UpdateInfo = {
+      currentVersion,
+      availableVersion: latestVersion,
+      notes: data.body ?? undefined,
+      pubDate: data.published_at ?? undefined,
+    };
+
+    const update: UpdateHandle = {
+      version: latestVersion,
+      notes: info.notes,
+      date: info.pubDate,
+      async downloadAndInstall() {
+        // No auto-download — direct user to website
+        window.open("https://devclaw.ccwu.cc", "_blank");
+      },
+    };
+
+    return { status: "available", info, update };
+  } finally {
+    clearTimeout(timeout);
   }
-
-  const mapped = mapUpdateHandle(update);
-  const info: UpdateInfo = {
-    currentVersion,
-    availableVersion: mapped.version,
-    notes: mapped.notes,
-    pubDate: mapped.date,
-  };
-
-  return { status: "available", info, update: mapped };
 }
 
 export async function relaunchApp(): Promise<void> {
   const { relaunch } = await import("@tauri-apps/plugin-process");
   await relaunch();
 }
-
-// 旧的聚合更新流程已由调用方直接使用 updateHandle 取代
-// 如需单函数封装，可在需要时基于 checkForUpdate + updateHandle 复合调用

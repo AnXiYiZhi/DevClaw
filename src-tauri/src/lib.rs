@@ -202,9 +202,8 @@ fn macos_tray_icon() -> Option<Image<'static>> {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // 初始化环境检测日志目录
+    // 初始化环境检测日志目录并清理过期日志
     commands::env_check::init_log_dir();
-    commands::env_check::write_debug_log("INFO", "应用启动");
 
     // 设置 panic hook，在应用崩溃时记录日志到 <app_config_dir>/crash.log（默认 ~/.cc-switch/crash.log）
     panic_hook::setup_panic_hook();
@@ -1182,10 +1181,19 @@ pub fn run() {
             commands::import_from_deeplink,
             commands::import_from_deeplink_unified,
             update_tray_menu,
+            // Claude CLI proxy configuration
+            commands::get_claude_proxy,
+            commands::set_claude_proxy,
+            commands::clear_claude_proxy,
+            commands::test_proxy,
+            commands::get_current_ip,
+            commands::open_claude_dir,
             // Environment variable management
             commands::check_env_conflicts,
             commands::delete_env_vars,
             commands::restore_env_backup,
+            commands::open_logs_dir,
+            commands::get_logs_content,
             // Skill management (v3.10.0+ unified)
             commands::get_installed_skills,
             commands::get_skill_backups,
@@ -1377,7 +1385,6 @@ pub fn run() {
             commands::check_single_env,
             commands::check_npm_available,
             commands::fix_npm_registry,
-            commands::read_install_log,
             commands::install_tool,
             commands::debug_env,
         ]);

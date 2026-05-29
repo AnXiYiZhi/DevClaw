@@ -26,6 +26,24 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Sync version from tag
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION="${GITHUB_REF_NAME}"
+          VERSION="${VERSION#v}"
+          echo "Syncing version: $VERSION"
+          # tauri.conf.json
+          jq --arg v "$VERSION" '.version = $v' src-tauri/tauri.conf.json > tmp.json && mv tmp.json src-tauri/tauri.conf.json
+          # Cargo.toml
+          sed -i'' "s/^version = .*/version = \"$VERSION\"/" src-tauri/Cargo.toml
+          # package.json (top-level only)
+          jq --arg v "$VERSION" '.version = $v' package.json > tmp.json && mv tmp.json package.json
+          echo "Done. Verifying:"
+          jq -r '.version' src-tauri/tauri.conf.json
+          grep '^version' src-tauri/Cargo.toml
+          jq -r '.version' package.json
+
       - name: Setup Node.js
         uses: actions/setup-node@v6
         with:
@@ -234,7 +252,7 @@ jobs:
           body: |
             ## DevClaw ${{ github.ref_name }}
 
-            🌐 **Only Official Website / 唯一官方网站 / 唯一の公式サイト**: [ccswitch.io](https://ccswitch.io)
+            🌐 **Only Official Website / 唯一官方网站 / 唯一の公式サイト**: [devclaw.ccwu.cc](https://devclaw.ccwu.cc)
 
             Claude Code 供应商切换工具
 
