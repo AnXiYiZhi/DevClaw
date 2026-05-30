@@ -362,6 +362,64 @@ jobs:
           set -euxo pipefail
           gh release upload "$GITHUB_REF_NAME" latest.json --clobber --repo "$GITHUB_REPOSITORY"
 
+  publish-gitee:
+    name: Publish to Gitee
+    runs-on: ubuntu-22.04
+    needs: publish-release
+    env:
+      GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
+      GITEE_REPO: ${{ secrets.GITEE_REPO }}
+    steps:
+      - name: Download all release assets
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euxo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          mkdir -p dl
+          gh release download "$TAG" --dir dl --repo "$GITHUB_REPOSITORY"
+          ls -la dl
+
+      - name: Create Gitee release
+        id: create_release
+        run: |
+          set -euxo pipefail
+          TAG="${GITHUB_REF_NAME}"
+          VERSION="${TAG#v}"
+          OWNER="${GITEE_REPO%%/*}"
+          REPO="${GITEE_REPO#*/}"
+
+          # Create release
+          RESPONSE=$(curl -s -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"tag_name\": \"${TAG}\",
+              \"name\": \"DevClaw ${TAG}\",
+              \"body\": \"Release ${TAG}\",
+              \"prerelease\": false
+            }&access_token=${GITEE_TOKEN}")
+
+          RELEASE_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          echo "release_id=${RELEASE_ID}" >> $GITHUB_OUTPUT
+          echo "Gitee release created: ${RELEASE_ID}"
+
+      - name: Upload assets to Gitee
+        run: |
+          set -euxo pipefail
+          RELEASE_ID="${{ steps.create_release.outputs.release_id }}"
+
+          for f in dl/*; do
+            [ -f "$f" ] || continue
+            FILENAME=$(basename "$f")
+            echo "Uploading $FILENAME to Gitee..."
+            curl -s -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases/${RELEASE_ID}/attach_files" \
+              -H "Content-Type: multipart/form-data" \
+              -F "access_token=${GITEE_TOKEN}" \
+              -F "file=@${f}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('browser_download_url','ERROR'))"
+            echo ""
+          done
+          echo "All assets uploaded to Gitee"
+
   upload-to-worker:
     name: Upload to DevClawWorker
     runs-on: ubuntu-22.04
