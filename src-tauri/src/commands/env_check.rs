@@ -5,40 +5,53 @@ use tauri_plugin_opener::OpenerExt;
 #[cfg(target_os = "windows")]
 use std::os::windows::process::CommandExt;
 
-/// 缓存 shell PATH，整个进程生命周期只计算一次
-static SHELL_PATH_CACHE: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+/// 缓存 shell PATH，安装工具后可清除以触发重新计算
+static SHELL_PATH_CACHE: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
 
-/// 获取 shell 的完整 PATH（首次调用时计算，后续返回缓存）
-fn get_shell_path() -> String {
-    SHELL_PATH_CACHE.get_or_init(|| {
-        let current = std::env::var("PATH").unwrap_or_default();
+/// 清除 shell PATH 缓存（安装工具后调用，使下次检测获取最新 PATH）
+pub fn invalidate_shell_path_cache() {
+    *SHELL_PATH_CACHE.write().unwrap() = None;
+    log::debug!("[env_check] shell PATH 缓存已清除");
+}
 
-        #[cfg(not(target_os = "windows"))]
-        {
-            let shell_path = get_shell_path_from_login_shell()
-                .or_else(get_shell_path_from_env_file);
+/// 计算 shell 的完整 PATH（不缓存）
+fn compute_shell_path() -> String {
+    let current = std::env::var("PATH").unwrap_or_default();
 
-            if let Some(sp) = shell_path {
-                if !sp.is_empty() {
-                    let mut seen = std::collections::HashSet::new();
-                    let mut merged = String::new();
-                    for p in sp.split(':').chain(current.split(':')) {
-                        if !p.is_empty() && seen.insert(p.to_string()) {
-                            if !merged.is_empty() {
-                                merged.push(':');
-                            }
-                            merged.push_str(p);
+    #[cfg(not(target_os = "windows"))]
+    {
+        let shell_path = get_shell_path_from_login_shell()
+            .or_else(get_shell_path_from_env_file);
+
+        if let Some(sp) = shell_path {
+            if !sp.is_empty() {
+                let mut seen = std::collections::HashSet::new();
+                let mut merged = String::new();
+                for p in sp.split(':').chain(current.split(':')) {
+                    if !p.is_empty() && seen.insert(p.to_string()) {
+                        if !merged.is_empty() {
+                            merged.push(':');
                         }
+                        merged.push_str(p);
                     }
-                    log::debug!("[env_check] shell PATH 已缓存 (来自 login shell)");
-                    return merged;
                 }
+                return merged;
             }
         }
+    }
 
-        log::debug!("[env_check] shell PATH 使用进程 PATH (fallback)");
-        current
-    }).clone()
+    current
+}
+
+/// 获取 shell 的完整 PATH（缓存，首次计算，之后返回缓存）
+fn get_shell_path() -> String {
+    if let Some(ref p) = *SHELL_PATH_CACHE.read().unwrap() {
+        return p.clone();
+    }
+    let p = compute_shell_path();
+    log::debug!("[env_check] shell PATH 已缓存");
+    *SHELL_PATH_CACHE.write().unwrap() = Some(p.clone());
+    p
 }
 
 /// 从 login shell 获取 PATH
@@ -579,6 +592,20 @@ fn run_cmd_logged_with_accept(tool: &str, label: &str, exe: &str, args: &[&str],
     }
 }
 
+/// 从 stderr 提取错误原因（优先 Error 行，否则最后一行有意义的内容）
+fn error_reason(stderr: &str) -> &str {
+    let err_line = stderr.lines()
+        .filter(|l| l.contains("Error:") || l.contains("error:"))
+        .last();
+    if let Some(e) = err_line {
+        return e.trim();
+    }
+    stderr.lines()
+        .filter(|l| !l.trim().is_empty())
+        .last()
+        .unwrap_or("未知错误")
+}
+
 /// 静默删除目录（失败不中断）
 fn remove_dir_silent(p: &str) -> bool {
     let path = std::path::Path::new(p);
@@ -601,13 +628,17 @@ fn is_node_managed_by_nvm() -> bool {
 }
 
 /// 检测 node 是否由 nvm 管理（macOS/Linux）
+/// 优先检查 nvm.sh 是否存在（即使当前无 node 版本），再回退到二进制路径检测
 #[cfg(not(target_os = "windows"))]
 fn is_node_managed_by_nvm() -> bool {
-    which::which("node")
-        .map(|p| {
-            let path_str = p.to_string_lossy().to_lowercase();
-            path_str.contains(".nvm") || path_str.contains("nvm")
-        })
+    let home = std::env::var("HOME").unwrap_or_default();
+    if std::path::Path::new(&format!("{}/.nvm/nvm.sh", home)).exists()
+        || std::path::Path::new("/usr/local/opt/nvm/nvm.sh").exists()
+    {
+        return true;
+    }
+    find_in_path("node", &get_shell_path())
+        .map(|p| p.to_lowercase().contains(".nvm"))
         .unwrap_or(false)
 }
 
@@ -616,10 +647,10 @@ fn is_node_managed_by_nvm() -> bool {
 fn is_node_managed_by_brew() -> bool {
     #[cfg(target_os = "macos")]
     {
-        which::which("node")
+        find_in_path("node", &get_shell_path())
             .map(|p| {
-                let path_str = p.to_string_lossy();
-                path_str.starts_with("/opt/homebrew/") || path_str.starts_with("/usr/local/Cellar/")
+                let path_str = p.to_lowercase();
+                path_str.starts_with("/opt/homebrew/") || path_str.starts_with("/usr/local/cellar/")
                     || path_str.starts_with("/usr/local/opt/")
             })
             .unwrap_or(false)
@@ -644,7 +675,7 @@ fn install_python_direct_fallback(path: &str, window: &tauri::Window) -> bool {
     // 用 PowerShell 下载 Python 安装程序到临时目录
     let installer_path = format!(r"{}\python-installer.exe",
         std::env::var("TEMP").unwrap_or_else(|_| r"C:\Windows\Temp".to_string()));
-    let download_url = "https://www.python.org/ftp/python/3.13.3/python-3.13.3-amd64.exe";
+    let download_url = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe";
 
     append_install_log("python", true, &format!("[回退] 下载: {}", download_url));
 
@@ -765,25 +796,6 @@ pub async fn install_tool(tool: String, uninstall_first: bool, window: tauri::Wi
 fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window) -> (bool, String) {
     let path = get_shell_path();
 
-    // 重装前先检查工具是否已可用，可用则跳过，避免无意义的下载等待
-    let detect_result = match tool.as_str() {
-        "nodejs" | "npm" => detect_tool("node"),
-        "python" => detect_python(),
-        "git" => detect_git(),
-        "vscode" => detect_vscode(),
-        "chrome" => detect_chrome(),
-        "claude" => detect_claude(),
-        _ => None,
-    };
-    if detect_result.is_some() {
-        let msg = format!("{} 已可用，跳过重装", &tool);
-        append_install_log(&tool, true, &msg);
-        let _ = window.emit("install_progress", serde_json::json!({
-            "tool": &tool, "progress": 100, "done": true
-        }));
-        return (true, msg);
-    }
-
     #[cfg(target_os = "windows")]
     {
         use std::io::{BufRead, BufReader};
@@ -877,8 +889,8 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
 
         // ── 安装阶段 (30% → 100%) ────────────────────────────────────────
         let full_cmd = match tool.as_str() {
-            "nodejs" | "npm" => "winget install OpenJS.NodeJS --force --accept-package-agreements --accept-source-agreements",
-            "python" => "winget install Python.Python.3.13 --force --accept-package-agreements --accept-source-agreements",
+            "nodejs" | "npm" => "winget install OpenJS.NodeJS.LTS --force --accept-package-agreements --accept-source-agreements",
+            "python" => "winget install Python.Python.3.12 --force --accept-package-agreements --accept-source-agreements",
             "git" => "winget install Git.Git --force --accept-package-agreements --accept-source-agreements",
             "vscode" => "winget install Microsoft.VisualStudioCode --force --accept-package-agreements --accept-source-agreements",
             "chrome" => "winget install Google.Chrome --force --accept-package-agreements --accept-source-agreements",
@@ -1020,7 +1032,14 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                 -1978335184 => "安装程序正在运行，请稍后重试",
                 -1978335189 => "已安装相同或更高版本",
                 -1978335212 => "未找到匹配的程序包",
-                _ => "安装失败",
+                _ => {
+                    let err = error_reason(&stderr_content);
+                    if err != "未知错误" && !err.is_empty() {
+                        err
+                    } else {
+                        "安装失败"
+                    }
+                },
             };
             format!("{} (退出码: {})", reason, exit_code)
         };
@@ -1037,6 +1056,7 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
         // 安装成功后刷新 PATH，确保后续检测能找到新安装的工具
         if success {
             refresh_path_after_install(&tool);
+            invalidate_shell_path_cache();
         }
 
         let _ = window.emit("install_progress", serde_json::json!({
@@ -1065,7 +1085,7 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                 let mut steps = Vec::new();
                 if is_node_managed_by_nvm() {
                     log::info!("[uninstall] 检测到 nvm 管理的 node，使用 nvm uninstall");
-                    steps.push(("__cmd__", "test -s ~/.nvm/nvm.sh && . ~/.nvm/nvm.sh 2>/dev/null && nvm uninstall $(nvm current) 2>&1 || true"));
+                    steps.push(("__cmd__", "test -s ~/.nvm/nvm.sh && . ~/.nvm/nvm.sh 2>/dev/null && v=$(nvm current) && nvm deactivate 2>/dev/null; nvm uninstall $v 2>&1 || true"));
                 } else if is_node_managed_by_brew() {
                     log::info!("[uninstall] 检测到 brew 管理的 node，使用 brew uninstall");
                     steps.push(("__cmd__", "brew uninstall node 2>/dev/null; true"));
@@ -1073,7 +1093,7 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                 } else {
                     // 都不是，尝试全部
                     steps.push(("__cmd__", "brew uninstall node 2>/dev/null; true"));
-                    steps.push(("__cmd__", "test -s ~/.nvm/nvm.sh && . ~/.nvm/nvm.sh 2>/dev/null && nvm uninstall $(nvm current) 2>&1 || true"));
+                    steps.push(("__cmd__", "test -s ~/.nvm/nvm.sh && . ~/.nvm/nvm.sh 2>/dev/null && v=$(nvm current) && nvm deactivate 2>/dev/null; nvm uninstall $v 2>&1 || true"));
                 }
                 steps.push(("__rm__",  "/usr/local/bin/node"));
                 steps.push(("__rm__",  "/opt/homebrew/bin/node"));
@@ -1086,6 +1106,7 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
             "python" => vec![
                 ("__cmd__", "brew uninstall python 2>/dev/null; true"),
                 ("__cmd__", "brew uninstall python3 2>/dev/null; true"),
+                ("__cmd__", "brew uninstall python@3.12 2>/dev/null; true"),
                 ("__rm__",  "/usr/local/bin/python3"),
                 ("__rm__",  "/opt/homebrew/bin/python3"),
                 ("__rm__",  "/usr/local/bin/pip3"),
@@ -1168,38 +1189,38 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
 
         let (success, msg) = match tool.as_str() {
             "vscode" => {
-                // 方案1：brew update-reset 切回官方源后安装
+                // 方案1：reinstall 处理"已安装"，失败则 install 首次安装
                 emit(40);
-                append_install_log(&tool, true, "[方案1] brew update-reset + brew install");
-                let (ok1, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh",
-                    &["-c", "export HOMEBREW_BOTTLE_DOMAIN='' HOMEBREW_API_DOMAIN=''; brew update-reset 2>&1 && brew update 2>&1 && brew uninstall --cask visual-studio-code 2>/dev/null; brew install --cask visual-studio-code 2>&1"], &path);
+                append_install_log(&tool, true, "[方案1] brew reinstall/install --cask");
+                let (ok1, _, stderr1) = run_install_cmd(&tool, "安装",
+                    "HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall --cask visual-studio-code 2>&1 || HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask visual-studio-code 2>&1", &path);
                 if ok1 {
                     emit(100);
                     append_install_log(&tool, true, "[方案1] 安装成功");
                     (true, "安装成功".to_string())
                 } else {
-                    // 方案2：修复 cask 定义文件后重试
+                    // 方案2：直接下载 DMG（比 brew 快，从微软 CDN 下载）
                     emit(55);
-                    append_install_log(&tool, false, "[方案1] 失败，[方案2] 修复cask定义");
-                    let (ok2, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh",
-                        &["-c", "brew uninstall --cask visual-studio-code 2>/dev/null; CASK=\"$(brew --repository)/Library/Taps/homebrew/homebrew-cask/Casks/v/visual-studio-code.rb\"; if [ -f \"$CASK\" ]; then sed -i '' 's/conflicts_with formula:/conflicts_with cask:/g' \"$CASK\"; fi; brew install --cask visual-studio-code 2>&1"], &path);
+                    append_install_log(&tool, false, &format!("[方案1] 失败: {}，[方案2] 直接下载DMG", error_reason(&stderr1)));
+                    let (ok2, _, stderr2) = run_install_cmd(&tool, "安装",
+                        "curl -L -o /tmp/vscode_install.zip 'https://update.code.visualstudio.com/latest/darwin-universal/stable' 2>&1 && unzip -o /tmp/vscode_install.zip -d /tmp/vscode_install_app 2>&1 && cp -R '/tmp/vscode_install_app/Visual Studio Code.app' /Applications/ 2>&1 && rm -rf /tmp/vscode_install.zip /tmp/vscode_install_app", &path);
                     if ok2 {
                         emit(100);
                         append_install_log(&tool, true, "[方案2] 安装成功");
                         (true, "安装成功".to_string())
                     } else {
-                        // 方案3：直接下载 DMG
-                        emit(70);
-                        append_install_log(&tool, false, "[方案2] 失败，[方案3] 直接下载DMG");
-                        let (ok3, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh",
-                            &["-c", "curl -L -o /tmp/vscode_install.zip 'https://update.code.visualstudio.com/latest/darwin-universal/stable' 2>&1 && unzip -o /tmp/vscode_install.zip -d /tmp/vscode_install_app 2>&1 && cp -R '/tmp/vscode_install_app/Visual Studio Code.app' /Applications/ 2>&1 && rm -rf /tmp/vscode_install.zip /tmp/vscode_install_app"], &path);
+                        // 方案3：brew reset 后重试（兜底，可能较慢）
+                        emit(80);
+                        append_install_log(&tool, false, &format!("[方案2] 失败: {}，[方案3] brew reset重试", error_reason(&stderr2)));
+                        let (ok3, _, stderr3) = run_install_cmd(&tool, "安装",
+                            "brew update-reset 2>&1 && brew update 2>&1 && brew reinstall --cask visual-studio-code 2>&1", &path);
                         if ok3 {
                             emit(100);
                             append_install_log(&tool, true, "[方案3] 安装成功");
                             (true, "安装成功".to_string())
                         } else {
                             emit(100);
-                            let msg = "自动安装失败，请访问 https://code.visualstudio.com/Download 手动下载安装".to_string();
+                            let msg = format!("自动安装失败: {}，请访问 https://code.visualstudio.com/Download 手动下载安装", error_reason(&stderr3));
                             append_install_log(&tool, false, &msg);
                             (false, msg)
                         }
@@ -1209,43 +1230,44 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
             "nodejs" | "npm" => {
                 let install_cmd = if is_node_managed_by_nvm() {
                     log::info!("[install] 检测到 nvm 管理的 node，使用 nvm install 重装");
-                    "test -s ~/.nvm/nvm.sh && . ~/.nvm/nvm.sh || { test -s /usr/local/opt/nvm/nvm.sh && . /usr/local/opt/nvm/nvm.sh; }; nvm install node"
+                    "export NVM_NODEJS_ORG_MIRROR=https://npmmirror.com/mirrors/node; test -s ~/.nvm/nvm.sh && . ~/.nvm/nvm.sh || { test -s /usr/local/opt/nvm/nvm.sh && . /usr/local/opt/nvm/nvm.sh; }; nvm install --lts"
                 } else {
-                    log::info!("[install] 使用 brew install node 重装");
-                    "HOMEBREW_NO_AUTO_UPDATE=1 brew install node"
+                    log::info!("[install] 使用 brew install node@22 (LTS) 重装");
+                    "HOMEBREW_NO_AUTO_UPDATE=1 brew install node@22"
                 };
-                let (ok, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", install_cmd], &path);
+                let (ok, _, stderr) = run_install_cmd(&tool, "安装", install_cmd, &path);
                 emit(100);
-                let msg = if ok { "安装成功" } else { "安装失败" };
-                append_install_log(&tool, ok, msg);
-                (ok, msg.to_string())
+                let msg = if ok { "安装成功".to_string() } else { format!("安装失败: {}", error_reason(&stderr)) };
+                append_install_log(&tool, ok, &msg);
+                (ok, msg)
             }
             "python" => {
-                let (ok, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "HOMEBREW_NO_AUTO_UPDATE=1 brew install python3"], &path);
+                let (ok, _, stderr) = run_install_cmd(&tool, "安装", "HOMEBREW_NO_AUTO_UPDATE=1 brew install python@3.12", &path);
                 emit(100);
-                let msg = if ok { "安装成功" } else { "安装失败" };
-                append_install_log(&tool, ok, msg);
-                (ok, msg.to_string())
+                let msg = if ok { "安装成功".to_string() } else { format!("安装失败: {}", error_reason(&stderr)) };
+                append_install_log(&tool, ok, &msg);
+                (ok, msg)
             }
             "git" => {
-                let (ok, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "HOMEBREW_NO_AUTO_UPDATE=1 brew install git"], &path);
+                let (ok, _, stderr) = run_install_cmd(&tool, "安装", "HOMEBREW_NO_AUTO_UPDATE=1 brew install git", &path);
                 emit(100);
-                let msg = if ok { "安装成功" } else { "安装失败" };
-                append_install_log(&tool, ok, msg);
-                (ok, msg.to_string())
+                let msg = if ok { "安装成功".to_string() } else { format!("安装失败: {}", error_reason(&stderr)) };
+                append_install_log(&tool, ok, &msg);
+                (ok, msg)
             }
             "chrome" => {
-                let (ok, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "HOMEBREW_NO_AUTO_UPDATE=1 brew uninstall --cask google-chrome 2>/dev/null; HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask google-chrome"], &path);
+                let (ok, _, stderr) = run_install_cmd(&tool, "安装",
+                    "HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall --cask google-chrome 2>&1 || HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask google-chrome 2>&1", &path);
                 emit(100);
-                let msg = if ok { "安装成功" } else { "安装失败" };
-                append_install_log(&tool, ok, msg);
-                (ok, msg.to_string())
+                let msg = if ok { "安装成功".to_string() } else { format!("安装失败: {}", error_reason(&stderr)) };
+                append_install_log(&tool, ok, &msg);
+                (ok, msg)
             }
             "claude" => {
                 // 方案1：默认 registry
                 emit(30);
                 append_install_log(&tool, true, "[方案1] npm install (默认)");
-                let (ok1, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "npm install -g @anthropic-ai/claude-code"], &path);
+                let (ok1, _, stderr1) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "npm install -g @anthropic-ai/claude-code"], &path);
                 if ok1 {
                     emit(100);
                     append_install_log(&tool, true, "[方案1] 安装成功");
@@ -1253,8 +1275,8 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                 } else {
                     // 方案2：npm 官方源
                     emit(48);
-                    append_install_log(&tool, false, "[方案1] 失败，[方案2] npm官方源");
-                    let (ok2, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "npm install -g @anthropic-ai/claude-code --registry https://registry.npmjs.org"], &path);
+                    append_install_log(&tool, false, &format!("[方案1] 失败: {}，[方案2] npm官方源", error_reason(&stderr1)));
+                    let (ok2, _, stderr2) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "npm install -g @anthropic-ai/claude-code --registry https://registry.npmjs.org"], &path);
                     if ok2 {
                         emit(100);
                         append_install_log(&tool, true, "[方案2] 安装成功");
@@ -1262,8 +1284,8 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                     } else {
                         // 方案3：清除 npm 客户端证书配置（npmrc 中 cafile/cert/key 指向无效文件时会导致 UNABLE_TO_GET_ISSUER_CERT_LOCALLY）
                         emit(66);
-                        append_install_log(&tool, false, "[方案2] 失败，[方案3] 清除npm cert配置");
-                        let (ok3, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "npm config delete cafile 2>/dev/null; npm config delete cert 2>/dev/null; npm config delete key 2>/dev/null; npm config set strict-ssl false 2>/dev/null; npm install -g @anthropic-ai/claude-code --registry https://registry.npmjs.org"], &path);
+                        append_install_log(&tool, false, &format!("[方案2] 失败: {}，[方案3] 清除npm cert配置", error_reason(&stderr2)));
+                        let (ok3, _, stderr3) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "npm config delete cafile 2>/dev/null; npm config delete cert 2>/dev/null; npm config delete key 2>/dev/null; npm config set strict-ssl false 2>/dev/null; npm install -g @anthropic-ai/claude-code --registry https://registry.npmjs.org"], &path);
                         if ok3 {
                             emit(100);
                             append_install_log(&tool, true, "[方案3] 安装成功");
@@ -1271,15 +1293,15 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                         } else {
                             // 方案4：终极兜底 — 跳过SSL校验 + 清除配置
                             emit(84);
-                            append_install_log(&tool, false, "[方案3] 失败，[方案4] 跳过SSL+清除配置");
-                            let (ok4, _, _) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "npm config delete cafile 2>/dev/null; npm config delete cert 2>/dev/null; npm config delete key 2>/dev/null; npm config set strict-ssl false 2>/dev/null; NODE_TLS_REJECT_UNAUTHORIZED=0 npm install -g @anthropic-ai/claude-code --registry https://registry.npmjs.org"], &path);
+                            append_install_log(&tool, false, &format!("[方案3] 失败: {}，[方案4] 跳过SSL+清除配置", error_reason(&stderr3)));
+                            let (ok4, _, stderr4) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "npm config delete cafile 2>/dev/null; npm config delete cert 2>/dev/null; npm config delete key 2>/dev/null; npm config set strict-ssl false 2>/dev/null; NODE_TLS_REJECT_UNAUTHORIZED=0 npm install -g @anthropic-ai/claude-code --registry https://registry.npmjs.org"], &path);
                             if ok4 {
                                 emit(100);
                                 append_install_log(&tool, true, "[方案4] 安装成功");
                                 (true, "安装成功".to_string())
                             } else {
                                 emit(100);
-                                let msg = "安装失败: npm SSL配置异常，请手动执行: npm config delete cafile && npm config delete cert && npm config delete key && npm config set strict-ssl false && npm install -g @anthropic-ai/claude-code".to_string();
+                                let msg = format!("安装失败: {}，请手动执行: npm config delete cafile && npm config delete cert && npm config delete key && npm config set strict-ssl false && npm install -g @anthropic-ai/claude-code", error_reason(&stderr4));
                                 append_install_log(&tool, false, &msg);
                                 (false, msg)
                             }
@@ -1290,12 +1312,47 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
             _ => return (false, "不支持的工具".to_string()),
         };
 
+        if success {
+            invalidate_shell_path_cache();
+        }
+
         let _ = window.emit("install_progress", serde_json::json!({
             "tool": &tool, "progress": 100, "done": true
         }));
 
         (success, msg)
     }
+}
+
+// ── brew 并发锁 ────────────────────────────────────────────────────
+// brew 同一时间只允许一个 install/uninstall 操作，用全局锁串行化避免锁冲突
+
+/// brew 国内镜像加速
+const BREW_MIRROR_ENV: &str = "HOMEBREW_BOTTLE_DOMAIN=https://mirrors.ustc.edu.cn/homebrew-bottles";
+
+/// 执行安装命令：brew 自动注入镜像 + 撞锁重试，非 brew 直接执行
+fn run_install_cmd(tool: &str, label: &str, cmd: &str, path: &str) -> (bool, String, String) {
+    let final_cmd = if cmd.contains("brew") && !cmd.contains("HOMEBREW_BOTTLE_DOMAIN") {
+        format!("export {}; {}", BREW_MIRROR_ENV, cmd)
+    } else {
+        cmd.to_string()
+    };
+
+    if cmd.contains("brew") {
+        for attempt in 0..3 {
+            let (ok, stdout, stderr) = run_cmd_logged(tool, label, "/bin/zsh", &["-c", &final_cmd], path);
+            if ok { return (ok, stdout, stderr); }
+            if stderr.contains("already locked") && attempt < 2 {
+                log::info!("[install] brew 被锁定，5秒后重试 ({}/3)", attempt + 1);
+                append_install_log(tool, true, &format!("[{}] brew 被锁定，{}秒后重试", label, (attempt + 1) * 5));
+                std::thread::sleep(std::time::Duration::from_secs(5));
+            } else {
+                return (ok, stdout, stderr);
+            }
+        }
+    }
+
+    run_cmd_logged(tool, label, "/bin/zsh", &["-c", &final_cmd], path)
 }
 
 // ── 日志模块 ──────────────────────────────────────────────────────

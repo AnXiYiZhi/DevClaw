@@ -207,9 +207,8 @@ export function EnvCheck({ onDone, onNavigate }: EnvCheckProps) {
   };
 
   const handleBatchInstall = async () => {
-    const tools = Object.entries(selectedTools)
-      .filter(([, v]) => v)
-      .map(([k]) => k);
+    const INSTALL_ORDER = ["nodejs", "git", "python", "vscode", "chrome", "claude"];
+    const tools = INSTALL_ORDER.filter((k) => selectedTools[k]);
     if (tools.length === 0) return;
     setBatchInstalling(true);
     for (const toolKey of tools) {
