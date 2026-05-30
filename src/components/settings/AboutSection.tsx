@@ -1168,6 +1168,32 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
         onConfirm={handleConfirmUpgrade}
         onCancel={handleCancelUpgrade}
       />
+
+      <motion.div
+        initial={{ opacity: 0, y: 10 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.3, delay: 0.4 }}
+        className="rounded-xl border border-border bg-gradient-to-br from-card/80 to-card/40 p-4 space-y-2 shadow-sm"
+      >
+        <p className="text-xs text-muted-foreground leading-relaxed">
+          DevClaw is based on{" "}
+          <button
+            type="button"
+            onClick={() => settingsApi.openExternal("https://github.com/farion1231/cc-switch")}
+            className="text-primary underline underline-offset-2 hover:text-primary/80"
+          >
+            CC Switch
+          </button>{" "}
+          by Jason Young, licensed under the{" "}
+          <button
+            type="button"
+            onClick={() => settingsApi.openExternal("https://github.com/AnXiYiZhi/DevCLaw/blob/main/LICENSE")}
+            className="text-primary underline underline-offset-2 hover:text-primary/80"
+          >
+            MIT License
+          </button>.
+        </p>
+      </motion.div>
     </motion.section>
   );
 }

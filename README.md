@@ -139,4 +139,20 @@ pnpm build            # 构建应用
 
 ## 许可证
 
-MIT
+本项目基于 [MIT 许可证](LICENSE) 开源。
+
+### 基于开源项目
+
+DevClaw 是 [CC Switch](https://github.com/farion1231/cc-switch) 的修改版本，原项目由 **Jason Young** 创建，采用 MIT 许可证。
+
+本项目包含对原项目的修改，包括但不限于：应用重命名、UI 调整、功能增强、商业化激活系统等。
+
+详见 [LICENSE](LICENSE)、[LICENSE-DEVCLAW.md](LICENSE-DEVCLAW.md) 和 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
+
+### 致谢
+
+- [CC Switch](https://github.com/farion1231/cc-switch) — 原始项目架构和核心功能
+- [Tauri](https://tauri.app/) — 桌面应用框架
+- [shadcn/ui](https://ui.shadcn.com/) — UI 组件库
+- [Radix UI](https://www.radix-ui.com/) — 无样式基础组件
+- [LobeHub Icons](https://github.com/lobehub/lobe-icons) — AI 服务商图标

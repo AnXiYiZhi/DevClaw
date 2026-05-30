@@ -55,7 +55,7 @@
   "plugins": {
     "deep-link": {
       "desktop": {
-        "schemes": ["ccswitch"]
+        "schemes": ["devclaw"]
       }
     },
     "updater": {

@@ -135,9 +135,9 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   {
     name: "火山Agentplan",
     websiteUrl:
-      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=devclaw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=devclaw",
     apiKeyUrl:
-      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=devclaw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=devclaw",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "ark_agentplan",
@@ -162,9 +162,9 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   {
     name: "BytePlus",
     websiteUrl:
-      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=devclaw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=devclaw",
     apiKeyUrl:
-      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=devclaw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=devclaw",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "byteplus",
@@ -191,9 +191,9 @@ export const codexProviderPresets: CodexProviderPreset[] = [
   {
     name: "DouBaoSeed",
     websiteUrl:
-      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=devclaw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=devclaw",
     apiKeyUrl:
-      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=devclaw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=devclaw",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(
       "doubaoseed",
@@ -831,7 +831,7 @@ requires_openai_auth = true`,
   {
     name: "ClaudeCN",
     websiteUrl: "https://claudecn.top",
-    apiKeyUrl: "https://claudecn.top/register?aff=ccswitch",
+    apiKeyUrl: "https://claudecn.top/register?aff=devclaw",
     category: "third_party",
     auth: generateThirdPartyAuth(""),
     config: generateThirdPartyConfig(

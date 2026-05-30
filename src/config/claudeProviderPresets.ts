@@ -124,9 +124,9 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "火山Agentplan",
     websiteUrl:
-      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=devclaw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=devclaw",
     apiKeyUrl:
-      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.volcengine.com/activity/agentplan?utm_campaign=hw&utm_content=devclaw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=devclaw",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://ark.cn-beijing.volces.com/api/coding",
@@ -146,9 +146,9 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "BytePlus",
     websiteUrl:
-      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=devclaw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=devclaw",
     apiKeyUrl:
-      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://www.byteplus.com/en/product/modelark?utm_campaign=hw&utm_content=devclaw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=devclaw",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL:
@@ -169,9 +169,9 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "DouBaoSeed",
     websiteUrl:
-      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=devclaw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=devclaw",
     apiKeyUrl:
-      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=ccswitch&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=ccswitch",
+      "https://console.volcengine.com/ark/region:ark+cn-beijing/apiKey?apikey=%7B%7D&utm_campaign=hw&utm_content=devclaw&utm_medium=devrel_tool_web&utm_source=OWO&utm_term=devclaw",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://ark.cn-beijing.volces.com/api/compatible",
@@ -641,7 +641,7 @@ export const providerPresets: ProviderPreset[] = [
   {
     name: "ClaudeCN",
     websiteUrl: "https://claudecn.top",
-    apiKeyUrl: "https://claudecn.top/register?aff=ccswitch",
+    apiKeyUrl: "https://claudecn.top/register?aff=devclaw",
     settingsConfig: {
       env: {
         ANTHROPIC_BASE_URL: "https://claudecn.top",
