@@ -389,17 +389,27 @@ jobs:
           OWNER="${GITEE_REPO%%/*}"
           REPO="${GITEE_REPO#*/}"
 
-          # Create release
-          RESPONSE=$(curl -s -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases" \
+          # Create release — access_token must be a query parameter, NOT inside JSON body
+          HTTP_CODE=$(curl -s -w "\n%{http_code}" -o /tmp/gitee_response.json \
+            -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases?access_token=${GITEE_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "{
               \"tag_name\": \"${TAG}\",
               \"name\": \"DevClaw ${TAG}\",
               \"body\": \"Release ${TAG}\",
               \"prerelease\": false
-            }&access_token=${GITEE_TOKEN}")
+            }")
 
-          RELEASE_ID=$(echo "$RESPONSE" | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
+          echo "HTTP status: ${HTTP_CODE}"
+          echo "Response body:"
+          cat /tmp/gitee_response.json
+
+          if [ "${HTTP_CODE}" -lt 200 ] || [ "${HTTP_CODE}" -ge 300 ]; then
+            echo "::error::Gitee create release failed with HTTP ${HTTP_CODE}"
+            exit 1
+          fi
+
+          RELEASE_ID=$(python3 -c "import json; print(json.load(open('/tmp/gitee_response.json'))['id'])")
           echo "release_id=${RELEASE_ID}" >> $GITHUB_OUTPUT
           echo "Gitee release created: ${RELEASE_ID}"
 
@@ -412,11 +422,22 @@ jobs:
             [ -f "$f" ] || continue
             FILENAME=$(basename "$f")
             echo "Uploading $FILENAME to Gitee..."
-            curl -s -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases/${RELEASE_ID}/attach_files" \
+
+            HTTP_CODE=$(curl -s -w "\n%{http_code}" -o /tmp/gitee_upload_response.json \
+              -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases/${RELEASE_ID}/attach_files?access_token=${GITEE_TOKEN}" \
               -H "Content-Type: multipart/form-data" \
-              -F "access_token=${GITEE_TOKEN}" \
-              -F "file=@${f}" | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('browser_download_url','ERROR'))"
-            echo ""
+              -F "file=@${f}")
+
+            echo "HTTP status: ${HTTP_CODE}"
+            cat /tmp/gitee_upload_response.json
+
+            if [ "${HTTP_CODE}" -lt 200 ] || [ "${HTTP_CODE}" -ge 300 ]; then
+              echo "::error::Failed to upload ${FILENAME} (HTTP ${HTTP_CODE})"
+              exit 1
+            fi
+
+            DOWNLOAD_URL=$(python3 -c "import json; print(json.load(open('/tmp/gitee_upload_response.json')).get('browser_download_url','N/A'))")
+            echo "Uploaded: ${DOWNLOAD_URL}"
           done
           echo "All assets uploaded to Gitee"
 
