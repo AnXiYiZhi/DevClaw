@@ -193,9 +193,15 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   const {
     hasUpdate,
     updateInfo,
+    updateHandle,
     checkUpdate,
     isChecking,
   } = useUpdate();
+
+  const [isDownloading, setIsDownloading] = useState(false);
+  const [downloadProgress, setDownloadProgress] = useState(0);
+  const [downloadTotal, setDownloadTotal] = useState(0);
+  const [readyToRestart, setReadyToRestart] = useState(false);
 
   const [wslShellByTool, setWslShellByTool] = useState<
     Record<string, WslShellPreference>
@@ -362,8 +368,30 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   }, []);
 
   const handleCheckUpdate = useCallback(async () => {
-    if (hasUpdate) {
-      await settingsApi.openExternal("https://devclaw.cc.cd");
+    if (hasUpdate && updateHandle) {
+      setIsDownloading(true);
+      setDownloadProgress(0);
+      setDownloadTotal(0);
+      try {
+        await updateHandle.downloadAndInstall((e) => {
+          if (e.event === "Started") {
+            setDownloadTotal(e.total ?? 0);
+            setDownloadProgress(0);
+          } else if (e.event === "Progress") {
+            setDownloadProgress(e.downloaded ?? 0);
+          } else if (e.event === "Finished") {
+            setReadyToRestart(true);
+            toast.success(t("settings.updateReadyToRestart"), { closeButton: true });
+          }
+        });
+      } catch (error) {
+        console.error("[AboutSection] Download failed", error);
+        await settingsApi.openExternal(
+          "https://github.com/AnXiYiZhi/DevCLaw/releases/latest",
+        );
+      } finally {
+        setIsDownloading(false);
+      }
       return;
     }
 
@@ -376,7 +404,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       console.error("[AboutSection] Check update failed", error);
       toast.error(t("settings.checkUpdateFailed"));
     }
-  }, [checkUpdate, hasUpdate, t]);
+  }, [checkUpdate, hasUpdate, updateHandle, t]);
 
   const handleCopyInstallCommands = useCallback(async () => {
     try {
@@ -750,32 +778,58 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
               <Globe className="h-3.5 w-3.5" />
               {t("settings.officialWebsite")}
             </Button>
-            <Button
-              type="button"
-              size="sm"
-              onClick={handleCheckUpdate}
-              disabled={isChecking}
-              className="h-8 gap-1.5 text-xs"
-            >
-              {isChecking ? (
-                <>
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  {t("settings.checking")}
-                </>
-              ) : hasUpdate ? (
-                <>
-                  <Download className="h-3.5 w-3.5" />
-                  {t("settings.updateTo", {
-                    version: updateInfo?.availableVersion ?? "",
-                  })}
-                </>
-              ) : (
-                <>
-                  <RefreshCw className="h-3.5 w-3.5" />
-                  {t("settings.checkForUpdates")}
-                </>
-              )}
-            </Button>
+{readyToRestart ? (
+              <Button
+                type="button"
+                size="sm"
+                onClick={async () => {
+                  try {
+                    const { relaunch } = await import("@tauri-apps/plugin-process");
+                    await relaunch();
+                  } catch {
+                    // fallback
+                  }
+                }}
+                className="h-8 gap-1.5 text-xs bg-green-600 hover:bg-green-700"
+              >
+                <ArrowUpCircle className="h-3.5 w-3.5" />
+                {t("settings.restartToUpdate")}
+              </Button>
+            ) : (
+              <Button
+                type="button"
+                size="sm"
+                onClick={handleCheckUpdate}
+                disabled={isChecking || isDownloading}
+                className="h-8 gap-1.5 text-xs"
+              >
+                {isDownloading ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    {downloadTotal > 0
+                      ? `${Math.round((downloadProgress / downloadTotal) * 100)}%`
+                      : t("settings.downloading")}
+                  </>
+                ) : isChecking ? (
+                  <>
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    {t("settings.checking")}
+                  </>
+                ) : hasUpdate ? (
+                  <>
+                    <Download className="h-3.5 w-3.5" />
+                    {t("settings.updateTo", {
+                      version: updateInfo?.availableVersion ?? "",
+                    })}
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="h-3.5 w-3.5" />
+                    {t("settings.checkForUpdates")}
+                  </>
+                )}
+              </Button>
+            )}
           </div>
         </div>
 
