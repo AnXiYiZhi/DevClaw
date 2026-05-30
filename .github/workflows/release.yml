@@ -390,11 +390,13 @@ jobs:
           REPO="${GITEE_REPO#*/}"
 
           # Create release — access_token must be a query parameter, NOT inside JSON body
+          # target_commitish is required by Gitee API (specify the branch name)
           HTTP_CODE=$(curl -s -w "\n%{http_code}" -o /tmp/gitee_response.json \
             -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases?access_token=${GITEE_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "{
               \"tag_name\": \"${TAG}\",
+              \"target_commitish\": \"master\",
               \"name\": \"DevClaw ${TAG}\",
               \"body\": \"Release ${TAG}\",
               \"prerelease\": false
