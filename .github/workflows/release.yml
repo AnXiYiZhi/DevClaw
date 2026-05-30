@@ -370,14 +370,15 @@ jobs:
       GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
       GITEE_REPO: ${{ secrets.GITEE_REPO }}
     steps:
-      - name: Download all release assets
+      - name: Download zip and dmg only
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euxo pipefail
           TAG="${GITHUB_REF_NAME}"
           mkdir -p dl
-          gh release download "$TAG" --dir dl --repo "$GITHUB_REPOSITORY"
+          gh release download "$TAG" --dir dl --repo "$GITHUB_REPOSITORY" \
+            --pattern "*.zip" --pattern "*.dmg"
           ls -la dl
 
       - name: Create Gitee release
