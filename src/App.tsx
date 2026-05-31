@@ -225,10 +225,10 @@ function App() {
     claude: true,
     "claude-desktop": true,
     codex: true,
-    gemini: true,
-    opencode: true,
-    openclaw: true,
-    hermes: true,
+    gemini: false,
+    opencode: false,
+    openclaw: false,
+    hermes: false,
   };
 
   const getFirstVisibleApp = (): AppId => {
@@ -276,7 +276,8 @@ function App() {
   const effectiveUsageProvider = useLastValidValue(usageProvider);
 
   const toolbarRef = useRef<HTMLDivElement>(null);
-  const isToolbarCompact = useAutoCompact(toolbarRef);
+  const toolbarBoundaryRef = useRef<HTMLDivElement>(null);
+  const isToolbarCompact = useAutoCompact(toolbarRef, toolbarBoundaryRef);
 
   useUsageCacheBridge();
 
@@ -1299,7 +1300,7 @@ function App() {
             )}
           </div>
 
-          <div className="flex flex-1 min-w-0 overflow-hidden items-center justify-end gap-1.5">
+          <div ref={toolbarBoundaryRef} className="flex flex-1 min-w-0 overflow-hidden items-center justify-end gap-1.5">
             {currentView === "providers" &&
               activeApp !== "opencode" &&
               activeApp !== "openclaw" &&
@@ -1326,7 +1327,7 @@ function App() {
               className="flex flex-1 min-w-0 overflow-x-hidden items-center py-4 pr-2"
             >
               <div
-                className="flex shrink-0 items-center gap-1.5 ml-auto"
+                className="flex items-center gap-1.5 ml-auto"
                 style={{ WebkitAppRegion: "no-drag" } as any}
               >
                 {currentView === "prompts" && (

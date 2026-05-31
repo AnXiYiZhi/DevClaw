@@ -67,7 +67,8 @@ export function AppSwitcher({
   });
 
   return (
-    <div className="inline-flex bg-muted rounded-xl p-1 gap-1">
+    <div className={cn("inline-flex bg-muted rounded-xl transition-all duration-200", compact ? "p-0.5 gap-1" : "p-1 gap-1")}>
+
       {appsToShow.map((app) => {
         const badgeConfig = APP_BADGE_ICON[app];
         const BadgeIcon = badgeConfig?.icon;
@@ -78,7 +79,8 @@ export function AppSwitcher({
             type="button"
             onClick={() => handleSwitch(app)}
             className={cn(
-              "group inline-flex items-center px-3 h-8 rounded-md text-sm font-medium transition-all duration-200",
+              "group inline-flex items-center rounded-md text-sm font-medium transition-all duration-200 shrink-0",
+              compact ? "px-2 h-7" : "px-3 h-8",
               isActive
                 ? "bg-background text-foreground shadow-sm"
                 : "text-muted-foreground hover:text-foreground hover:bg-background/50",
@@ -88,12 +90,13 @@ export function AppSwitcher({
               <ProviderIcon
                 icon={appIconName[app]}
                 name={appDisplayName[app]}
-                size={iconSize}
+                size={compact ? 18 : iconSize}
               />
               {BadgeIcon && (
                 <span
                   className={cn(
-                    "absolute -bottom-0.5 -right-0.5 flex items-center justify-center rounded-[3px] border h-[11px] w-[11px]",
+                    "absolute -bottom-0.5 -right-0.5 flex items-center justify-center rounded-[3px] border",
+                    compact ? "h-[10px] w-[10px]" : "h-[11px] w-[11px]",
                     isActive
                       ? "bg-background border-border text-foreground"
                       : "bg-muted border-background text-muted-foreground group-hover:bg-background group-hover:text-foreground",
@@ -101,7 +104,7 @@ export function AppSwitcher({
                   aria-hidden="true"
                 >
                   <BadgeIcon
-                    className="h-[8px] w-[8px]"
+                    className={cn(compact ? "h-[7px] w-[7px]" : "h-[8px] w-[8px]")}
                     strokeWidth={2.5}
                     style={
                       badgeConfig?.offsetY
