@@ -361,7 +361,7 @@ impl ProxyService {
         effective_settings["config"] = json!(updated_config);
         Self::attach_codex_model_catalog_from_provider(&mut effective_settings, Some(provider));
 
-        self.write_codex_live_for_provider(&effective_settings, Some(provider))?;
+        self.write_codex_takeover_live_for_provider(&effective_settings, Some(provider))?;
         Ok(())
     }
 
@@ -1216,7 +1216,7 @@ impl ProxyService {
                 codex_provider.as_ref(),
             );
 
-            self.write_codex_live_for_provider(&live_config, codex_provider.as_ref())?;
+            self.write_codex_takeover_live_for_provider(&live_config, codex_provider.as_ref())?;
             log::info!("Codex Live 配置已接管，代理地址: {proxy_codex_base_url}");
         }
 
@@ -1280,7 +1280,7 @@ impl ProxyService {
                     Some(&codex_provider),
                 );
 
-                self.write_codex_live_for_provider(&live_config, Some(&codex_provider))?;
+                self.write_codex_takeover_live_for_provider(&live_config, Some(&codex_provider))?;
                 log::info!("Codex Live 配置已接管，代理地址: {proxy_codex_base_url}");
             }
             AppType::Gemini => {
@@ -1359,8 +1359,10 @@ impl ProxyService {
                         codex_provider.as_ref(),
                     );
 
-                    let _ =
-                        self.write_codex_live_for_provider(&live_config, codex_provider.as_ref());
+                    let _ = self.write_codex_takeover_live_for_provider(
+                        &live_config,
+                        codex_provider.as_ref(),
+                    );
                 }
             }
             AppType::Gemini => {
@@ -2265,6 +2267,38 @@ impl ProxyService {
             config_str,
         )
         .map_err(|e| format!("写入 Codex 配置失败: {e}"))
+    }
+
+    fn codex_auth_has_proxy_placeholder(auth: &Value) -> bool {
+        auth.get("OPENAI_API_KEY").and_then(|v| v.as_str()) == Some(PROXY_TOKEN_PLACEHOLDER)
+    }
+
+    fn write_codex_takeover_live_for_provider(
+        &self,
+        config: &Value,
+        provider: Option<&Provider>,
+    ) -> Result<(), String> {
+        if crate::settings::preserve_codex_official_auth_on_switch() {
+            if let Some(auth) = config
+                .get("auth")
+                .filter(|auth| Self::codex_auth_has_proxy_placeholder(auth))
+            {
+                let config_str = config.get("config").and_then(|v| v.as_str()).unwrap_or("");
+                let prepared_config =
+                    crate::codex_config::prepare_codex_live_config_text_with_optional_catalog(
+                        config, config_str,
+                    )
+                    .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
+                let live_config =
+                    crate::codex_config::prepare_codex_provider_live_config(auth, &prepared_config)
+                        .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
+                crate::codex_config::write_codex_live_config_atomic(Some(&live_config))
+                    .map_err(|e| format!("写入 Codex 配置失败: {e}"))?;
+                return Ok(());
+            }
+        }
+
+        self.write_codex_live_for_provider(config, provider)
     }
 
     fn write_codex_live_verbatim(&self, config: &Value) -> Result<(), String> {
