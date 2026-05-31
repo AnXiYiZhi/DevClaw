@@ -35,20 +35,27 @@ export function useAutoCompact(
     const boundary = boundaryRef?.current ?? el;
 
     const checkOverflow = () => {
-      const availableWidth = boundary.clientWidth;
-      const contentWidth = el.scrollWidth;
+      const containerWidth = boundary.clientWidth;
+
+      // Read the inner content element's natural width directly.
+      // el.scrollWidth is unreliable in flex layouts: when the child fits,
+      // ml-auto absorbs extra space and scrollWidth reports the container
+      // width instead of the child's natural width.
+      const child = el.firstElementChild as HTMLElement | null;
+      if (!child) return;
+      const contentWidth = child.scrollWidth;
 
       if (!compactRef.current) {
         // Overflow detected → switch to compact immediately (no lock)
-        if (contentWidth > availableWidth + 1) {
+        if (contentWidth > containerWidth + 1) {
           normalWidthRef.current = contentWidth;
           setCompact(true);
         }
-      } else if (normalWidthRef.current > 0) {
-        // In compact mode: only recover to normal if
-        // available space >= what normal mode needed
-        if (availableWidth >= normalWidthRef.current) {
-          if (Date.now() < lockUntilRef.current) return;
+      } else {
+        // In compact mode: expand back when available space is clearly wider
+        // than current compact content (1.3x).
+        if (Date.now() < lockUntilRef.current) return;
+        if (containerWidth > contentWidth * 1.3) {
           // Lock out resize events during the expand animation (200ms + 50ms margin)
           lockUntilRef.current = Date.now() + 250;
           setCompact(false);
@@ -57,8 +64,9 @@ export function useAutoCompact(
           // (ResizeObserver won't fire if container size hasn't changed)
           if (checkTimeoutRef.current) clearTimeout(checkTimeoutRef.current);
           checkTimeoutRef.current = setTimeout(() => {
-            if (el.scrollWidth > boundary.clientWidth + 1) {
-              normalWidthRef.current = el.scrollWidth;
+            const recheckChild = el.firstElementChild as HTMLElement | null;
+            if (recheckChild && recheckChild.scrollWidth > boundary.clientWidth + 1) {
+              normalWidthRef.current = recheckChild.scrollWidth;
               setCompact(true);
             }
           }, 300);

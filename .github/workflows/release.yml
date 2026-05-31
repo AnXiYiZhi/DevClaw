@@ -378,7 +378,7 @@ jobs:
           TAG="${GITHUB_REF_NAME}"
           mkdir -p dl
           gh release download "$TAG" --dir dl --repo "$GITHUB_REPOSITORY" \
-            --pattern "*.zip" --pattern "*.dmg"
+            --pattern "*Portable*.zip" --pattern "*macOS.dmg"
           ls -la dl
 
       - name: Create Gitee release

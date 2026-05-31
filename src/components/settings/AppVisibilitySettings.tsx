@@ -39,10 +39,10 @@ export function AppVisibilitySettings({
     claude: true,
     "claude-desktop": true,
     codex: true,
-    gemini: true,
-    opencode: true,
-    openclaw: true,
-    hermes: true,
+    gemini: false,
+    opencode: false,
+    openclaw: false,
+    hermes: false,
   };
 
   // Count how many apps are currently visible

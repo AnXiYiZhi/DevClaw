@@ -109,16 +109,13 @@ export function ActivationPage({ onActivated }: ActivationPageProps) {
             授权密钥
           </label>
           <Input
-            type="text"
+            type={activationCode.includes("-") ? "text" : "password"}
             value={activationCode}
             onChange={(e) => setActivationCode(e.target.value.toUpperCase())}
             placeholder="CCS-XXXX-XXXX-XXXX"
             disabled={status === "loading"}
             className="font-mono text-sm tracking-wider"
           />
-          <p className="text-xs text-muted-foreground">
-            格式: CCS-XXXX-XXXX-XXXX（字母大写+数字）
-          </p>
         </div>
 
         <Button
