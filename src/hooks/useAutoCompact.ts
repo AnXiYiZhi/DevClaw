@@ -26,7 +26,7 @@ export function useAutoCompact(
 
     const getContentWidth = () => {
       const child = el.firstElementChild as HTMLElement | null;
-      return child?.scrollWidth ?? el.scrollWidth;
+      return Math.max(el.scrollWidth, child?.scrollWidth ?? 0);
     };
 
     const checkOverflow = () => {
