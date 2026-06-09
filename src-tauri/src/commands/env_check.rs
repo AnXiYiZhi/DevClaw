@@ -14,6 +14,36 @@ pub fn invalidate_shell_path_cache() {
     log::debug!("[env_check] shell PATH 缓存已清除");
 }
 
+#[cfg(test)]
+mod tests {
+    use super::find_in_path;
+
+    #[test]
+    fn find_in_path_uses_platform_path_separator_and_extensions() {
+        let dir = tempfile::tempdir().expect("tempdir");
+        let other = tempfile::tempdir().expect("tempdir");
+
+        #[cfg(target_os = "windows")]
+        let file_name = "devclaw-test-tool.cmd";
+        #[cfg(not(target_os = "windows"))]
+        let file_name = "devclaw-test-tool";
+
+        let tool_path = dir.path().join(file_name);
+        std::fs::write(&tool_path, "").expect("write fake executable");
+        let path = std::env::join_paths([other.path(), dir.path()]).expect("join path");
+        let path = path.to_string_lossy().to_string();
+
+        let found = find_in_path("devclaw-test-tool", &path).expect("tool should be found");
+        assert_eq!(
+            std::path::Path::new(&found)
+                .file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.to_ascii_lowercase()),
+            Some(file_name.to_ascii_lowercase())
+        );
+    }
+}
+
 /// 计算 shell 的完整 PATH（不缓存）
 fn compute_shell_path() -> String {
     let current = std::env::var("PATH").unwrap_or_default();
@@ -170,12 +200,50 @@ fn extract_first_line(stdout: Vec<u8>, stderr: Vec<u8>) -> Option<String> {
     extract(&stdout).or_else(|| extract(&stderr))
 }
 
+fn executable_candidates(cmd: &str) -> Vec<String> {
+    #[cfg(target_os = "windows")]
+    {
+        if std::path::Path::new(cmd).extension().is_some() {
+            return vec![cmd.to_string()];
+        }
+
+        let mut candidates = Vec::new();
+        let pathext =
+            std::env::var("PATHEXT").unwrap_or_else(|_| ".COM;.EXE;.BAT;.CMD".to_string());
+        for ext in pathext.split(';') {
+            let ext = ext.trim();
+            if ext.is_empty() {
+                continue;
+            }
+            let ext = if ext.starts_with('.') {
+                ext.to_string()
+            } else {
+                format!(".{ext}")
+            };
+            candidates.push(format!("{cmd}{ext}"));
+        }
+        candidates.push(cmd.to_string());
+        candidates
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        vec![cmd.to_string()]
+    }
+}
+
 /// 在 shell PATH 中查找可执行文件，返回完整路径
 fn find_in_path(cmd: &str, path: &str) -> Option<String> {
-    for dir in path.split(':') {
-        let exe = format!("{}/{}", dir, cmd);
-        if std::path::Path::new(&exe).is_file() {
-            return Some(exe);
+    let candidates = executable_candidates(cmd);
+    for dir in std::env::split_paths(path) {
+        if dir.as_os_str().is_empty() {
+            continue;
+        }
+        for candidate in &candidates {
+            let exe = dir.join(candidate);
+            if exe.is_file() {
+                return Some(exe.to_string_lossy().to_string());
+            }
         }
     }
     None
@@ -325,8 +393,9 @@ fn detect_vscode() -> Option<String> {
                 let path = get_shell_path();
                 let mut c = Command::new("cmd");
                 c.creation_flags(0x08000000);
+                let version_cmd = format!("\"{}\" --version", code_cmd);
                 let result = c
-                    .args(["/C", &code_cmd, "--version"])
+                    .args(["/C", &version_cmd])
                     .env("PATH", &path)
                     .output()
                     .ok()
@@ -993,8 +1062,19 @@ fn install_tool_inner(
                         ],
                     ),
                     (
-                        "rm chrome dir",
-                        vec!["__rm_dir__", r"__LOCALAPPDATA__\Google\Chrome"],
+                        "rm chrome app dir",
+                        vec!["__rm_dir__", r"__LOCALAPPDATA__\Google\Chrome\Application"],
+                    ),
+                    (
+                        "rm chrome program dir",
+                        vec!["__rm_dir__", r"C:\Program Files\Google\Chrome\Application"],
+                    ),
+                    (
+                        "rm chrome x86 program dir",
+                        vec![
+                            "__rm_dir__",
+                            r"C:\Program Files (x86)\Google\Chrome\Application",
+                        ],
                     ),
                 ],
                 "claude" => {
@@ -1031,17 +1111,17 @@ fn install_tool_inner(
             for (i, (label, args)) in uninstall_steps.iter().enumerate() {
                 let pct = ((i as u32 + 1) * 30) / total.max(1);
                 emit(pct);
-                let p = args[1]
-                    .replace("__APPDATA__", &std::env::var("APPDATA").unwrap_or_default())
-                    .replace(
-                        "__LOCALAPPDATA__",
-                        &std::env::var("LOCALAPPDATA").unwrap_or_default(),
-                    )
-                    .replace(
-                        "__USERPROFILE__",
-                        &std::env::var("USERPROFILE").unwrap_or_default(),
-                    );
                 if args[0] == "__rm_dir__" {
+                    let p = args[1]
+                        .replace("__APPDATA__", &std::env::var("APPDATA").unwrap_or_default())
+                        .replace(
+                            "__LOCALAPPDATA__",
+                            &std::env::var("LOCALAPPDATA").unwrap_or_default(),
+                        )
+                        .replace(
+                            "__USERPROFILE__",
+                            &std::env::var("USERPROFILE").unwrap_or_default(),
+                        );
                     let exists = std::path::Path::new(&p).exists();
                     let ok = remove_dir_silent(&p);
                     append_install_log(
@@ -1050,6 +1130,16 @@ fn install_tool_inner(
                         &format!("[卸载:{}] 删除目录 '{}' (存在: {})", label, p, exists),
                     );
                 } else if args[0] == "__rm_file__" {
+                    let p = args[1]
+                        .replace("__APPDATA__", &std::env::var("APPDATA").unwrap_or_default())
+                        .replace(
+                            "__LOCALAPPDATA__",
+                            &std::env::var("LOCALAPPDATA").unwrap_or_default(),
+                        )
+                        .replace(
+                            "__USERPROFILE__",
+                            &std::env::var("USERPROFILE").unwrap_or_default(),
+                        );
                     let path = std::path::Path::new(&p);
                     let exists = path.exists();
                     let ok = if exists {
@@ -1358,8 +1448,6 @@ fn install_tool_inner(
                             "brew uninstall --cask visual-studio-code 2>/dev/null; true",
                         ),
                         ("__rm__", "/Applications/Visual Studio Code.app"),
-                        ("__rm_h__", "~/Library/Application Support/Code"),
-                        ("__rm_h__", "~/.vscode"),
                     ]
                 }
                 "chrome" => {
@@ -1372,9 +1460,6 @@ fn install_tool_inner(
                             "brew uninstall --cask google-chrome 2>/dev/null; true",
                         ),
                         ("__rm__", "/Applications/Google Chrome.app"),
-                        ("__rm_h__", "~/Library/Application Support/Google/Chrome"),
-                        ("__rm_h__", "~/Library/Caches/Google/Chrome"),
-                        ("__rm_h__", "~/Library/Caches/com.google.Chrome"),
                     ]
                 }
                 "claude" => {
@@ -1491,7 +1576,7 @@ fn install_tool_inner(
                     "export NVM_NODEJS_ORG_MIRROR=https://npmmirror.com/mirrors/node; test -s ~/.nvm/nvm.sh && . ~/.nvm/nvm.sh || { test -s /usr/local/opt/nvm/nvm.sh && . /usr/local/opt/nvm/nvm.sh; }; nvm install --lts"
                 } else {
                     log::info!("[install] 使用 brew install node@22 (LTS) 重装");
-                    "HOMEBREW_NO_AUTO_UPDATE=1 brew install node@22"
+                    "HOMEBREW_NO_AUTO_UPDATE=1 brew install node@22 && brew link --overwrite --force node@22"
                 };
                 let (ok, _, stderr) = run_install_cmd(&tool, "安装", install_cmd, &path);
                 emit(100);
