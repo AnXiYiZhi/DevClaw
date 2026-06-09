@@ -13,12 +13,15 @@ export function useAutoCompact(
   const [compact, setCompact] = useState(false);
   const compactRef = useRef(false);
   const normalWidthRef = useRef(0);
+  const lastFailedExpandWidthRef = useRef(0);
   const lockUntilRef = useRef(0);
   const checkTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const expandRetryStep = 48;
 
-  useEffect(() => {
-    compactRef.current = compact;
-  }, [compact]);
+  const setCompactState = (nextCompact: boolean) => {
+    compactRef.current = nextCompact;
+    setCompact(nextCompact);
+  };
 
   useEffect(() => {
     const el = containerRef.current;
@@ -38,18 +41,25 @@ export function useAutoCompact(
       if (!compactRef.current) {
         if (contentWidth > containerWidth + 1) {
           normalWidthRef.current = contentWidth;
-          setCompact(true);
+          lastFailedExpandWidthRef.current = containerWidth;
+          setCompactState(true);
         }
       } else if (normalWidthRef.current > 0) {
-        if (containerWidth >= normalWidthRef.current) {
+        if (
+          containerWidth >= normalWidthRef.current ||
+          containerWidth >= lastFailedExpandWidthRef.current + expandRetryStep
+        ) {
           lockUntilRef.current = Date.now() + 250;
-          setCompact(false);
+          setCompactState(false);
 
           if (checkTimeoutRef.current) clearTimeout(checkTimeoutRef.current);
           checkTimeoutRef.current = setTimeout(() => {
             if (getContentWidth() > el.clientWidth + 1) {
               normalWidthRef.current = getContentWidth();
-              setCompact(true);
+              lastFailedExpandWidthRef.current = el.clientWidth;
+              setCompactState(true);
+            } else {
+              lastFailedExpandWidthRef.current = 0;
             }
           }, 300);
         }

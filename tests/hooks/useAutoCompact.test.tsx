@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from "react";
-import { render, screen, waitFor } from "@testing-library/react";
+import { act, render, screen, waitFor } from "@testing-library/react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { useAutoCompact } from "@/hooks/useAutoCompact";
 
@@ -14,11 +14,20 @@ const defineWidth = (
   });
 };
 
-class ImmediateResizeObserver {
+const resizeObservers = new Set<ResizeObserverCallback>();
+
+const triggerResizeObservers = () => {
+  resizeObservers.forEach((callback) => {
+    callback([], {} as ResizeObserver);
+  });
+};
+
+class TestResizeObserver {
   private readonly callback: ResizeObserverCallback;
 
   constructor(callback: ResizeObserverCallback) {
     this.callback = callback;
+    resizeObservers.add(callback);
   }
 
   observe() {
@@ -27,7 +36,9 @@ class ImmediateResizeObserver {
 
   unobserve() {}
 
-  disconnect() {}
+  disconnect() {
+    resizeObservers.delete(this.callback);
+  }
 }
 
 const CompactHarness = ({
@@ -63,11 +74,12 @@ const CompactHarness = ({
 
 describe("useAutoCompact", () => {
   afterEach(() => {
+    resizeObservers.clear();
     vi.unstubAllGlobals();
   });
 
   it("switches to compact when toolbar content exceeds available width", async () => {
-    vi.stubGlobal("ResizeObserver", ImmediateResizeObserver);
+    vi.stubGlobal("ResizeObserver", TestResizeObserver);
 
     render(<CompactHarness containerWidth={180} contentWidth={360} />);
 
@@ -77,9 +89,53 @@ describe("useAutoCompact", () => {
   });
 
   it("stays normal when toolbar content fits", async () => {
-    vi.stubGlobal("ResizeObserver", ImmediateResizeObserver);
+    vi.stubGlobal("ResizeObserver", TestResizeObserver);
 
     render(<CompactHarness containerWidth={360} contentWidth={180} />);
+
+    await waitFor(() => {
+      expect(screen.getByTestId("compact-state")).toHaveTextContent("normal");
+    });
+  });
+
+  it("recovers from compact when the normal toolbar width fits again", async () => {
+    vi.stubGlobal("ResizeObserver", TestResizeObserver);
+
+    const { rerender } = render(
+      <CompactHarness containerWidth={180} contentWidth={360} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("compact-state")).toHaveTextContent("compact");
+    });
+
+    rerender(<CompactHarness containerWidth={420} contentWidth={360} />);
+
+    act(() => {
+      triggerResizeObservers();
+    });
+
+    await waitFor(() => {
+      expect(screen.getByTestId("compact-state")).toHaveTextContent("normal");
+    });
+  });
+
+  it("retries expansion instead of waiting for a stale normal width", async () => {
+    vi.stubGlobal("ResizeObserver", TestResizeObserver);
+
+    const { rerender } = render(
+      <CompactHarness containerWidth={180} contentWidth={360} />,
+    );
+
+    await waitFor(() => {
+      expect(screen.getByTestId("compact-state")).toHaveTextContent("compact");
+    });
+
+    rerender(<CompactHarness containerWidth={340} contentWidth={320} />);
+
+    act(() => {
+      triggerResizeObservers();
+    });
 
     await waitFor(() => {
       expect(screen.getByTestId("compact-state")).toHaveTextContent("normal");
