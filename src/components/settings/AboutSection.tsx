@@ -384,7 +384,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
       } catch (error) {
         console.error("[AboutSection] Download failed", error);
         await settingsApi.openExternal(
-          "https://github.com/AnXiYiZhi/DevCLaw/releases/latest",
+          "https://github.com/AnXiYiZhi/DevClaw/releases/latest",
         );
       } finally {
         setIsDownloading(false);
@@ -1190,7 +1190,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             type="button"
             onClick={() =>
               settingsApi.openExternal(
-                "https://github.com/AnXiYiZhi/DevCLaw/blob/main/LICENSE",
+                "https://github.com/AnXiYiZhi/DevClaw/blob/main/LICENSE",
               )
             }
             className="text-primary underline underline-offset-2 hover:text-primary/80"

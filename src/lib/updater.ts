@@ -132,7 +132,7 @@ async function checkViaGitHubApi(
   | { status: "up-to-date" }
   | { status: "available"; info: UpdateInfo; update: UpdateHandle }
 > {
-  const GITHUB_REPO = "AnXiYiZhi/DevCLaw";
+  const GITHUB_REPO = "AnXiYiZhi/DevClaw";
   const GITHUB_API_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases`;
 
   const resp = await fetch(GITHUB_API_URL, {
