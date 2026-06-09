@@ -492,7 +492,8 @@ jobs:
         run: |
           set -euxo pipefail
           RELEASE_ID="${{ steps.create_release.outputs.release_id }}"
-          MAX_RETRIES=3
+          MAX_RETRIES=1
+          FAILED_ASSETS=0
 
           for f in dl/*; do
             [ -f "$f" ] || continue
@@ -516,30 +517,39 @@ jobs:
             for attempt in $(seq 1 $MAX_RETRIES); do
               echo "Uploading ${FILENAME} (attempt ${attempt}/${MAX_RETRIES})..."
 
-              HTTP_CODE=$(curl -sS --retry 2 --retry-delay 5 --retry-all-errors --connect-timeout 20 --max-time 300 -w "%{http_code}" -o /tmp/gitee_upload_response.json \
+              set +e
+              HTTP_CODE=$(curl -sS --connect-timeout 20 --max-time 300 -w "%{http_code}" -o /tmp/gitee_upload_response.json \
                 -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases/${RELEASE_ID}/attach_files?access_token=${GITEE_TOKEN}" \
                 -H "Content-Type: multipart/form-data" \
                 -F "file=@${f}")
+              CURL_STATUS=$?
+              set -e
 
+              echo "curl status: ${CURL_STATUS}"
               echo "HTTP status: ${HTTP_CODE}"
-              cat /tmp/gitee_upload_response.json
+              cat /tmp/gitee_upload_response.json || true
 
-              if [ "${HTTP_CODE}" -ge 200 ] && [ "${HTTP_CODE}" -lt 300 ]; then
+              if [ "${CURL_STATUS}" -eq 0 ] && [ "${HTTP_CODE}" -ge 200 ] && [ "${HTTP_CODE}" -lt 300 ]; then
                 DOWNLOAD_URL=$(python3 -c "import json; print(json.load(open('/tmp/gitee_upload_response.json')).get('browser_download_url','N/A'))")
                 echo "✅ Uploaded: ${DOWNLOAD_URL}"
                 break
               fi
 
               if [ "$attempt" -eq "$MAX_RETRIES" ]; then
-                echo "::error::Failed to upload ${FILENAME} after ${MAX_RETRIES} attempts (HTTP ${HTTP_CODE})"
-                exit 1
+                echo "::warning::Failed to upload ${FILENAME} to Gitee after ${MAX_RETRIES} attempts (curl ${CURL_STATUS}, HTTP ${HTTP_CODE})"
+                FAILED_ASSETS=1
+                break
               fi
 
               echo "⚠️ Upload failed, retrying in 10s..."
               sleep 10
             done
           done
-          echo "All assets uploaded to Gitee"
+          if [ "${FAILED_ASSETS}" -ne 0 ]; then
+            echo "::warning::Some Gitee mirror assets were not uploaded; GitHub release and updater artifacts remain available."
+          else
+            echo "All assets uploaded to Gitee"
+          fi
 
   upload-to-worker:
     name: Upload to DevClawWorker
