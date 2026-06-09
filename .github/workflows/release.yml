@@ -520,6 +520,7 @@ jobs:
               set +e
               HTTP_CODE=$(curl -sS --connect-timeout 20 --max-time 300 -w "%{http_code}" -o /tmp/gitee_upload_response.json \
                 -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases/${RELEASE_ID}/attach_files?access_token=${GITEE_TOKEN}" \
+                -H "Expect:" \
                 -H "Content-Type: multipart/form-data" \
                 -F "file=@${f}")
               CURL_STATUS=$?
