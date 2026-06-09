@@ -280,8 +280,7 @@ function App() {
   const effectiveUsageProvider = useLastValidValue(usageProvider);
 
   const toolbarRef = useRef<HTMLDivElement>(null);
-  const toolbarBoundaryRef = useRef<HTMLDivElement>(null);
-  const isToolbarCompact = useAutoCompact(toolbarRef, toolbarBoundaryRef);
+  const isToolbarCompact = useAutoCompact(toolbarRef);
 
   useUsageCacheBridge();
 
@@ -1304,10 +1303,7 @@ function App() {
             )}
           </div>
 
-          <div
-            ref={toolbarBoundaryRef}
-            className="flex flex-1 min-w-0 overflow-hidden items-center justify-end gap-1.5"
-          >
+          <div className="flex flex-1 min-w-0 overflow-hidden items-center justify-end gap-1.5">
             {currentView === "providers" &&
               activeApp !== "opencode" &&
               activeApp !== "openclaw" &&
