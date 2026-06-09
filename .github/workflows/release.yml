@@ -445,25 +445,26 @@ jobs:
           set -euxo pipefail
           TAG="${GITHUB_REF_NAME}"
 
-          # Check if release already exists (e.g. from a previous failed run)
-          EXISTING=$(curl -s --connect-timeout 20 --max-time 120 "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases?access_token=${GITEE_TOKEN}&page=1&per_page=100" \
-            | python3 -c "
-          import sys, json
-          for r in json.load(sys.stdin):
-              if r.get('tag_name') == '${TAG}':
-                  print(r['id'])
-                  sys.exit(0)
-          " || true)
+          # Check the tag directly so a partial previous run can be resumed reliably.
+          LOOKUP_CODE=$(curl -sS --retry 2 --retry-delay 5 --retry-all-errors --connect-timeout 20 --max-time 120 -w "%{http_code}" -o /tmp/gitee_release_by_tag.json \
+            "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases/tags/${TAG}?access_token=${GITEE_TOKEN}")
 
-          if [ -n "$EXISTING" ]; then
-            echo "Gitee release already exists (id=${EXISTING}), reusing"
-            echo "release_id=${EXISTING}" >> $GITHUB_OUTPUT
+          if [ "$LOOKUP_CODE" = "200" ]; then
+            RELEASE_ID=$(python3 -c "import json; print(json.load(open('/tmp/gitee_release_by_tag.json'))['id'])")
+            echo "Gitee release already exists (id=${RELEASE_ID}), reusing"
+            echo "release_id=${RELEASE_ID}" >> $GITHUB_OUTPUT
             exit 0
+          fi
+
+          if [ "$LOOKUP_CODE" != "404" ]; then
+            echo "::error::Gitee release lookup failed with HTTP ${LOOKUP_CODE}"
+            cat /tmp/gitee_release_by_tag.json || true
+            exit 1
           fi
 
           # Create release — access_token must be a query parameter, NOT inside JSON body
           # target_commitish is required by Gitee API (specify the branch name)
-          HTTP_CODE=$(curl -s --connect-timeout 20 --max-time 120 -w "\n%{http_code}" -o /tmp/gitee_response.json \
+          HTTP_CODE=$(curl -sS --retry 2 --retry-delay 5 --retry-all-errors --connect-timeout 20 --max-time 120 -w "%{http_code}" -o /tmp/gitee_response.json \
             -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases?access_token=${GITEE_TOKEN}" \
             -H "Content-Type: application/json" \
             -d "{
@@ -498,7 +499,7 @@ jobs:
             FILENAME=$(basename "$f")
 
             # Check if file already uploaded (from a previous partial run)
-            EXISTING=$(curl -s --connect-timeout 20 --max-time 120 "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases/${RELEASE_ID}/attach_files?access_token=${GITEE_TOKEN}&page=1&per_page=100" \
+            EXISTING=$(curl -sS --retry 2 --retry-delay 5 --retry-all-errors --connect-timeout 20 --max-time 120 "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases/${RELEASE_ID}/attach_files?access_token=${GITEE_TOKEN}&page=1&per_page=100" \
               | python3 -c "
           import sys, json
           for f in json.load(sys.stdin):
@@ -515,7 +516,7 @@ jobs:
             for attempt in $(seq 1 $MAX_RETRIES); do
               echo "Uploading ${FILENAME} (attempt ${attempt}/${MAX_RETRIES})..."
 
-              HTTP_CODE=$(curl -s --connect-timeout 20 --max-time 300 -w "\n%{http_code}" -o /tmp/gitee_upload_response.json \
+              HTTP_CODE=$(curl -sS --retry 2 --retry-delay 5 --retry-all-errors --connect-timeout 20 --max-time 300 -w "%{http_code}" -o /tmp/gitee_upload_response.json \
                 -X POST "https://gitee.com/api/v5/repos/${GITEE_REPO}/releases/${RELEASE_ID}/attach_files?access_token=${GITEE_TOKEN}" \
                 -H "Content-Type: multipart/form-data" \
                 -F "file=@${f}")
