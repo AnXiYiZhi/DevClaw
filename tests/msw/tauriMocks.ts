@@ -43,6 +43,10 @@ export const emitTauriEvent = (event: string, payload: unknown) => {
   handlers?.forEach((handler) => handler({ payload }));
 };
 
+export const resetTauriEventListeners = () => {
+  listeners.clear();
+};
+
 vi.mock("@tauri-apps/api/event", () => ({
   listen: async (
     event: string,
@@ -54,6 +58,18 @@ vi.mock("@tauri-apps/api/event", () => ({
       set.delete(handler);
     };
   },
+}));
+
+vi.mock("@tauri-apps/api/window", () => ({
+  getCurrentWindow: () => ({
+    close: vi.fn().mockResolvedValue(undefined),
+    isMaximized: vi.fn().mockResolvedValue(false),
+    maximize: vi.fn().mockResolvedValue(undefined),
+    minimize: vi.fn().mockResolvedValue(undefined),
+    onResized: vi.fn().mockResolvedValue(() => {}),
+    setDecorations: vi.fn().mockResolvedValue(undefined),
+    unmaximize: vi.fn().mockResolvedValue(undefined),
+  }),
 }));
 
 // Ensure the MSW server is referenced so tree shaking doesn't remove imports

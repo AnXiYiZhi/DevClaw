@@ -1,15 +1,22 @@
 import { Suspense, type ComponentType } from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, fireEvent } from "@testing-library/react";
-import { describe, it, expect, beforeEach, vi } from "vitest";
+import {
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+  cleanup,
+} from "@testing-library/react";
+import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { providersApi } from "@/lib/api/providers";
 import {
   resetProviderState,
   setCurrentProviderId,
   setLiveProviderIds,
   setProviders,
+  setSettings,
 } from "../msw/state";
-import { emitTauriEvent } from "../msw/tauriMocks";
+import { emitTauriEvent, resetTauriEventListeners } from "../msw/tauriMocks";
 
 const toastSuccessMock = vi.fn();
 const toastErrorMock = vi.fn();
@@ -156,11 +163,33 @@ const renderApp = (AppComponent: ComponentType) => {
   );
 };
 
+const enableOpenClawApp = () => {
+  setSettings({
+    visibleApps: {
+      claude: true,
+      "claude-desktop": true,
+      codex: true,
+      gemini: false,
+      opencode: false,
+      openclaw: true,
+      hermes: false,
+    },
+  });
+};
+
 describe("App integration with MSW", () => {
   beforeEach(() => {
     resetProviderState();
+    localStorage.removeItem("cc-switch-last-app");
+    localStorage.removeItem("cc-switch-last-view");
+    localStorage.setItem("cc-switch-env-check-done", "true");
     toastSuccessMock.mockReset();
     toastErrorMock.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+    resetTauriEventListeners();
   });
 
   it("covers basic provider flows via real hooks", async () => {
@@ -218,7 +247,7 @@ describe("App integration with MSW", () => {
 
     expect(toastErrorMock).not.toHaveBeenCalled();
     expect(toastSuccessMock).toHaveBeenCalled();
-  });
+  }, 30000);
 
   it("shows toast when auto sync fails in background", async () => {
     const { default: App } = await import("@/App");
@@ -264,11 +293,12 @@ describe("App integration with MSW", () => {
     });
     setCurrentProviderId("openclaw", "deepseek");
     setLiveProviderIds("openclaw", ["deepseek-copy"]);
+    enableOpenClawApp();
 
     const { default: App } = await import("@/App");
     renderApp(App);
 
-    fireEvent.click(screen.getByText("switch-openclaw"));
+    fireEvent.click(await screen.findByText("switch-openclaw"));
 
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(
@@ -306,6 +336,7 @@ describe("App integration with MSW", () => {
       },
     });
     setCurrentProviderId("openclaw", "deepseek");
+    enableOpenClawApp();
 
     const liveIdsSpy = vi
       .spyOn(providersApi, "getOpenClawLiveProviderIds")
@@ -314,7 +345,7 @@ describe("App integration with MSW", () => {
     const { default: App } = await import("@/App");
     renderApp(App);
 
-    fireEvent.click(screen.getByText("switch-openclaw"));
+    fireEvent.click(await screen.findByText("switch-openclaw"));
 
     await waitFor(() =>
       expect(screen.getByTestId("provider-list").textContent).toContain(

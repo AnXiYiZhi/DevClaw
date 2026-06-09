@@ -40,6 +40,10 @@ const withJson = async <T>(request: Request): Promise<T> => {
 const success = <T>(payload: T) => HttpResponse.json(payload as any);
 
 export const handlers = [
+  http.post(`${TAURI_ENDPOINT}/check_license`, () => success(true)),
+  http.post(`${TAURI_ENDPOINT}/verify_license`, () =>
+    success({ ok: true, error: null }),
+  ),
   http.post(`${TAURI_ENDPOINT}/get_migration_result`, () => success(false)),
   http.post(`${TAURI_ENDPOINT}/get_skills_migration_result`, () =>
     success(null),
