@@ -40,7 +40,11 @@ fn extract_port(url: &str, scheme: &str) -> String {
         .trim_start_matches(scheme)
         .trim_start_matches("://");
     let remainder = remainder.trim_end_matches('/');
-    remainder.splitn(2, ':').nth(1).unwrap_or("").to_string()
+    remainder
+        .split_once(':')
+        .map(|(_, port)| port)
+        .unwrap_or("")
+        .to_string()
 }
 
 #[tauri::command]

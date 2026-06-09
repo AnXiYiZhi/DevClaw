@@ -577,19 +577,8 @@ fn append_install_log(tool: &str, success: bool, msg: &str) {
     write_install_log(tool, success, msg);
 }
 
-/// 静默执行一条命令（失败不中断）
-fn run_cmd_silent(exe: &str, args: &[&str], path: &str) -> bool {
-    let mut c = Command::new(exe);
-    #[cfg(target_os = "windows")]
-    c.creation_flags(0x08000000);
-    c.args(args)
-        .env("PATH", path)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
 /// 执行命令并捕获输出，写入详细日志
+#[allow(dead_code)]
 fn run_cmd_logged(
     tool: &str,
     label: &str,
@@ -655,15 +644,13 @@ fn run_cmd_logged_with_accept(
 fn error_reason(stderr: &str) -> &str {
     let err_line = stderr
         .lines()
-        .filter(|l| l.contains("Error:") || l.contains("error:"))
-        .last();
+        .rfind(|l| l.contains("Error:") || l.contains("error:"));
     if let Some(e) = err_line {
         return e.trim();
     }
     stderr
         .lines()
-        .filter(|l| !l.trim().is_empty())
-        .last()
+        .rfind(|l| !l.trim().is_empty())
         .unwrap_or("未知错误")
 }
 
@@ -1185,7 +1172,7 @@ fn install_tool_inner(
             let log_buf = stderr_log_clone;
             std::thread::spawn(move || {
                 let reader = BufReader::new(stderr);
-                for line in reader.lines().flatten() {
+                for line in reader.lines().map_while(Result::ok) {
                     log::debug!("[install stderr] {}", line);
                     log_buf.lock().unwrap().push_str(&line);
                     log_buf.lock().unwrap().push('\n');
@@ -1365,30 +1352,30 @@ fn install_tool_inner(
                     ("__rm__", "/opt/homebrew/bin/git"),
                 ],
                 "vscode" => {
-                    let mut steps = Vec::new();
-                    steps.push((
-                        "__cmd__",
-                        "brew uninstall --cask visual-studio-code 2>/dev/null; true",
-                    ));
-                    steps.push(("__rm__", "/Applications/Visual Studio Code.app"));
-                    steps.push(("__rm_h__", "~/Library/Application Support/Code"));
-                    steps.push(("__rm_h__", "~/.vscode"));
-                    steps
+                    vec![
+                        (
+                            "__cmd__",
+                            "brew uninstall --cask visual-studio-code 2>/dev/null; true",
+                        ),
+                        ("__rm__", "/Applications/Visual Studio Code.app"),
+                        ("__rm_h__", "~/Library/Application Support/Code"),
+                        ("__rm_h__", "~/.vscode"),
+                    ]
                 }
                 "chrome" => {
-                    let mut steps = Vec::new();
-                    // 先杀掉 Chrome 进程，否则运行中的 .app bundle 被 macOS 锁定无法删除
-                    steps.push(("__cmd__", "pkill -9 'Google Chrome' 2>/dev/null; true"));
-                    // 尝试 brew 卸载（处理通过 brew 安装的情况）
-                    steps.push((
-                        "__cmd__",
-                        "brew uninstall --cask google-chrome 2>/dev/null; true",
-                    ));
-                    steps.push(("__rm__", "/Applications/Google Chrome.app"));
-                    steps.push(("__rm_h__", "~/Library/Application Support/Google/Chrome"));
-                    steps.push(("__rm_h__", "~/Library/Caches/Google/Chrome"));
-                    steps.push(("__rm_h__", "~/Library/Caches/com.google.Chrome"));
-                    steps
+                    vec![
+                        // 先杀掉 Chrome 进程，否则运行中的 .app bundle 被 macOS 锁定无法删除
+                        ("__cmd__", "pkill -9 'Google Chrome' 2>/dev/null; true"),
+                        // 尝试 brew 卸载（处理通过 brew 安装的情况）
+                        (
+                            "__cmd__",
+                            "brew uninstall --cask google-chrome 2>/dev/null; true",
+                        ),
+                        ("__rm__", "/Applications/Google Chrome.app"),
+                        ("__rm_h__", "~/Library/Application Support/Google/Chrome"),
+                        ("__rm_h__", "~/Library/Caches/Google/Chrome"),
+                        ("__rm_h__", "~/Library/Caches/com.google.Chrome"),
+                    ]
                 }
                 "claude" => {
                     let mut steps = Vec::new();
@@ -1414,11 +1401,9 @@ fn install_tool_inner(
                     "__cmd__" => {
                         let _ = run_cmd_logged(&tool, "卸载", "/bin/zsh", &["-c", val], &path);
                     }
-                    "__rm__" => {
-                        if std::path::Path::new(val).exists() {
-                            let ok = remove_dir_silent(val);
-                            append_install_log(&tool, ok, &format!("[卸载] rm '{}'", val));
-                        }
+                    "__rm__" if std::path::Path::new(val).exists() => {
+                        let ok = remove_dir_silent(val);
+                        append_install_log(&tool, ok, &format!("[卸载] rm '{}'", val));
                     }
                     "__rm_h__" => {
                         let expanded = val.replace("~", &home);
@@ -1657,9 +1642,11 @@ fn install_tool_inner(
 // brew 同一时间只允许一个 install/uninstall 操作，用全局锁串行化避免锁冲突
 
 /// brew 国内镜像加速
+#[allow(dead_code)]
 const BREW_MIRROR_ENV: &str = "HOMEBREW_BOTTLE_DOMAIN=https://mirrors.ustc.edu.cn/homebrew-bottles";
 
 /// 执行安装命令：brew 自动注入镜像 + 撞锁重试，非 brew 直接执行
+#[allow(dead_code)]
 fn run_install_cmd(tool: &str, label: &str, cmd: &str, path: &str) -> (bool, String, String) {
     let final_cmd = if cmd.contains("brew") && !cmd.contains("HOMEBREW_BOTTLE_DOMAIN") {
         format!("export {}; {}", BREW_MIRROR_ENV, cmd)
@@ -1840,7 +1827,7 @@ pub async fn get_logs_content() -> Result<String, String> {
             name.starts_with("install-") && name.ends_with(".log")
         })
         .collect();
-    files.sort_by(|a, b| b.file_name().cmp(&a.file_name()));
+    files.sort_by_key(|entry| std::cmp::Reverse(entry.file_name()));
     for entry in files {
         let path = entry.path();
         let name = path.file_name().unwrap_or_default().to_string_lossy();
@@ -1878,7 +1865,7 @@ pub async fn get_logs_content() -> Result<String, String> {
 #[cfg(target_os = "windows")]
 #[tauri::command]
 pub async fn debug_env() -> String {
-    tauri::async_runtime::spawn_blocking(|| debug_env_inner())
+    tauri::async_runtime::spawn_blocking(debug_env_inner)
         .await
         .unwrap_or_default()
 }
@@ -2146,7 +2133,7 @@ fn debug_env_inner() -> String {
 #[cfg(not(target_os = "windows"))]
 #[tauri::command]
 pub async fn debug_env() -> String {
-    tauri::async_runtime::spawn_blocking(|| debug_env_inner())
+    tauri::async_runtime::spawn_blocking(debug_env_inner)
         .await
         .unwrap_or_default()
 }
