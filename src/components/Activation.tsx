@@ -1,7 +1,14 @@
 import { useEffect, useState } from "react";
 import { motion } from "framer-motion";
 import { invoke } from "@tauri-apps/api/core";
-import { Shield, Check, Copy, CheckCircle, XCircle, Loader2 } from "lucide-react";
+import {
+  Shield,
+  Check,
+  Copy,
+  CheckCircle,
+  XCircle,
+  Loader2,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { toast } from "sonner";
@@ -13,12 +20,16 @@ interface ActivationPageProps {
 export function ActivationPage({ onActivated }: ActivationPageProps) {
   const [deviceId, setDeviceId] = useState("");
   const [activationCode, setActivationCode] = useState("");
-  const [status, setStatus] = useState<"idle" | "loading" | "success" | "error">("idle");
+  const [status, setStatus] = useState<
+    "idle" | "loading" | "success" | "error"
+  >("idle");
   const [copied, setCopied] = useState(false);
   const [error, setError] = useState("");
 
   useEffect(() => {
-    invoke<string>("get_device_id").then(setDeviceId).catch(() => {});
+    invoke<string>("get_device_id")
+      .then(setDeviceId)
+      .catch(() => {});
   }, []);
 
   const copyDeviceId = async () => {
@@ -77,7 +88,9 @@ export function ActivationPage({ onActivated }: ActivationPageProps) {
             <Shield className="w-7 h-7 text-white" />
           </div>
           <h1 className="text-2xl font-bold text-foreground">DevClaw</h1>
-          <p className="text-sm text-muted-foreground">请输入授权密钥以继续使用</p>
+          <p className="text-sm text-muted-foreground">
+            请输入授权密钥以继续使用
+          </p>
         </div>
 
         <div className="flex flex-col gap-2">

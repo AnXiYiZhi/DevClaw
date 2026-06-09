@@ -167,7 +167,11 @@ const TRANSIENT_VIEWS: View[] = ["envCheck", "claudeProxy"];
 
 const getInitialView = (): View => {
   const saved = localStorage.getItem(VIEW_STORAGE_KEY) as View | null;
-  if (saved && VALID_VIEWS.includes(saved) && !TRANSIENT_VIEWS.includes(saved)) {
+  if (
+    saved &&
+    VALID_VIEWS.includes(saved) &&
+    !TRANSIENT_VIEWS.includes(saved)
+  ) {
     return saved;
   }
   return "providers";
@@ -1300,7 +1304,10 @@ function App() {
             )}
           </div>
 
-          <div ref={toolbarBoundaryRef} className="flex flex-1 min-w-0 overflow-hidden items-center justify-end gap-1.5">
+          <div
+            ref={toolbarBoundaryRef}
+            className="flex flex-1 min-w-0 overflow-hidden items-center justify-end gap-1.5"
+          >
             {currentView === "providers" &&
               activeApp !== "opencode" &&
               activeApp !== "openclaw" &&
@@ -1440,7 +1447,12 @@ function App() {
                       compact={isToolbarCompact}
                     />
 
-                    <div className={cn("flex items-center gap-1 p-1 bg-muted rounded-xl transition-all duration-200", isToolbarCompact && "gap-0.5 p-0.5")}>
+                    <div
+                      className={cn(
+                        "flex items-center gap-1 p-1 bg-muted rounded-xl transition-all duration-200",
+                        isToolbarCompact && "gap-0.5 p-0.5",
+                      )}
+                    >
                       <AnimatePresence mode="wait">
                         <motion.div
                           key={
@@ -1450,7 +1462,10 @@ function App() {
                                 ? "hermes"
                                 : "default"
                           }
-                          className={cn("flex items-center transition-all duration-200", isToolbarCompact ? "gap-0" : "gap-1")}
+                          className={cn(
+                            "flex items-center transition-all duration-200",
+                            isToolbarCompact ? "gap-0" : "gap-1",
+                          )}
                           initial={{ opacity: 0 }}
                           animate={{ opacity: 1 }}
                           exit={{ opacity: 0 }}
@@ -1462,34 +1477,64 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("skills")}
-                                className={cn("text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5", isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2")}
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2",
+                                )}
                                 title={t("skills.manage")}
                               >
-                                <Wrench className={cn(isToolbarCompact ? "w-3.5 h-3.5" : "w-4 h-4")} />
+                                <Wrench
+                                  className={cn(
+                                    isToolbarCompact
+                                      ? "w-3.5 h-3.5"
+                                      : "w-4 h-4",
+                                  )}
+                                />
                               </Button>
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("hermesMemory")}
-                                className={cn("text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5", isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2")}
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2",
+                                )}
                                 title={t("hermes.memory.title")}
                               >
-                                <Brain className={cn(isToolbarCompact ? "w-3.5 h-3.5" : "w-4 h-4")} />
+                                <Brain
+                                  className={cn(
+                                    isToolbarCompact
+                                      ? "w-3.5 h-3.5"
+                                      : "w-4 h-4",
+                                  )}
+                                />
                               </Button>
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => void openHermesWebUI()}
-                                className={cn("text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5", isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2")}
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2",
+                                )}
                                 title={t("hermes.webui.open")}
                               >
-                                <LayoutDashboard className={cn(isToolbarCompact ? "w-3.5 h-3.5" : "w-4 h-4")} />
+                                <LayoutDashboard
+                                  className={cn(
+                                    isToolbarCompact
+                                      ? "w-3.5 h-3.5"
+                                      : "w-4 h-4",
+                                  )}
+                                />
                               </Button>
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("mcp")}
-                                className={cn("text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5", isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2")}
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2",
+                                )}
                                 title={t("mcp.title")}
                               >
                                 <McpIcon size={isToolbarCompact ? 14 : 16} />
@@ -1501,46 +1546,91 @@ function App() {
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("workspace")}
-                                className={cn("text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5", isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2")}
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2",
+                                )}
                                 title={t("workspace.manage")}
                               >
-                                <FolderOpen className={cn(isToolbarCompact ? "w-3.5 h-3.5" : "w-4 h-4")} />
+                                <FolderOpen
+                                  className={cn(
+                                    isToolbarCompact
+                                      ? "w-3.5 h-3.5"
+                                      : "w-4 h-4",
+                                  )}
+                                />
                               </Button>
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("openclawEnv")}
-                                className={cn("text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5", isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2")}
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2",
+                                )}
                                 title={t("openclaw.env.title")}
                               >
-                                <KeyRound className={cn(isToolbarCompact ? "w-3.5 h-3.5" : "w-4 h-4")} />
+                                <KeyRound
+                                  className={cn(
+                                    isToolbarCompact
+                                      ? "w-3.5 h-3.5"
+                                      : "w-4 h-4",
+                                  )}
+                                />
                               </Button>
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("openclawTools")}
-                                className={cn("text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5", isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2")}
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2",
+                                )}
                                 title={t("openclaw.tools.title")}
                               >
-                                <Shield className={cn(isToolbarCompact ? "w-3.5 h-3.5" : "w-4 h-4")} />
+                                <Shield
+                                  className={cn(
+                                    isToolbarCompact
+                                      ? "w-3.5 h-3.5"
+                                      : "w-4 h-4",
+                                  )}
+                                />
                               </Button>
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("openclawAgents")}
-                                className={cn("text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5", isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2")}
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2",
+                                )}
                                 title={t("openclaw.agents.title")}
                               >
-                                <Cpu className={cn(isToolbarCompact ? "w-3.5 h-3.5" : "w-4 h-4")} />
+                                <Cpu
+                                  className={cn(
+                                    isToolbarCompact
+                                      ? "w-3.5 h-3.5"
+                                      : "w-4 h-4",
+                                  )}
+                                />
                               </Button>
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("sessions")}
-                                className={cn("text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5", isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2")}
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2",
+                                )}
                                 title={t("sessionManager.title")}
                               >
-                                <History className={cn(isToolbarCompact ? "w-3.5 h-3.5" : "w-4 h-4")} />
+                                <History
+                                  className={cn(
+                                    isToolbarCompact
+                                      ? "w-3.5 h-3.5"
+                                      : "w-4 h-4",
+                                  )}
+                                />
                               </Button>
                             </>
                           ) : (
@@ -1553,21 +1643,42 @@ function App() {
                                   "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
                                   "transition-all duration-200 ease-in-out overflow-hidden",
                                   hasSkillsSupport
-                                    ? cn("opacity-100 scale-100", isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2")
+                                    ? cn(
+                                        "opacity-100 scale-100",
+                                        isToolbarCompact
+                                          ? "w-7 px-1.5"
+                                          : "w-8 px-2",
+                                      )
                                     : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
                                 )}
                                 title={t("skills.manage")}
                               >
-                                <Wrench className={cn("flex-shrink-0", isToolbarCompact ? "w-3.5 h-3.5" : "w-4 h-4")} />
+                                <Wrench
+                                  className={cn(
+                                    "flex-shrink-0",
+                                    isToolbarCompact
+                                      ? "w-3.5 h-3.5"
+                                      : "w-4 h-4",
+                                  )}
+                                />
                               </Button>
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("prompts")}
-                                className={cn("text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5", isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2")}
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2",
+                                )}
                                 title={t("prompts.manage")}
                               >
-                                <Book className={cn(isToolbarCompact ? "w-3.5 h-3.5" : "w-4 h-4")} />
+                                <Book
+                                  className={cn(
+                                    isToolbarCompact
+                                      ? "w-3.5 h-3.5"
+                                      : "w-4 h-4",
+                                  )}
+                                />
                               </Button>
                               <Button
                                 variant="ghost"
@@ -1577,18 +1688,33 @@ function App() {
                                   "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
                                   "transition-all duration-200 ease-in-out overflow-hidden",
                                   hasSessionSupport
-                                    ? cn("opacity-100 scale-100", isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2")
+                                    ? cn(
+                                        "opacity-100 scale-100",
+                                        isToolbarCompact
+                                          ? "w-7 px-1.5"
+                                          : "w-8 px-2",
+                                      )
                                     : "opacity-0 w-0 scale-75 pointer-events-none px-0 -ml-1",
                                 )}
                                 title={t("sessionManager.title")}
                               >
-                                <History className={cn("flex-shrink-0", isToolbarCompact ? "w-3.5 h-3.5" : "w-4 h-4")} />
+                                <History
+                                  className={cn(
+                                    "flex-shrink-0",
+                                    isToolbarCompact
+                                      ? "w-3.5 h-3.5"
+                                      : "w-4 h-4",
+                                  )}
+                                />
                               </Button>
                               <Button
                                 variant="ghost"
                                 size="sm"
                                 onClick={() => setCurrentView("mcp")}
-                                className={cn("text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5", isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2")}
+                                className={cn(
+                                  "text-muted-foreground hover:text-foreground hover:bg-black/5 dark:hover:bg-white/5",
+                                  isToolbarCompact ? "w-7 px-1.5" : "w-8 px-2",
+                                )}
                                 title={t("mcp.title")}
                               >
                                 <McpIcon size={isToolbarCompact ? 14 : 16} />
@@ -1602,9 +1728,15 @@ function App() {
                     <Button
                       onClick={() => setIsAddOpen(true)}
                       size="icon"
-                      className={cn("ml-2", addActionButtonClass, isToolbarCompact && "h-7 w-7")}
+                      className={cn(
+                        "ml-2",
+                        addActionButtonClass,
+                        isToolbarCompact && "h-7 w-7",
+                      )}
                     >
-                      <Plus className={cn(isToolbarCompact ? "w-4 h-4" : "w-5 h-5")} />
+                      <Plus
+                        className={cn(isToolbarCompact ? "w-4 h-4" : "w-5 h-5")}
+                      />
                     </Button>
                   </>
                 )}

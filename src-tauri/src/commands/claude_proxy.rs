@@ -35,13 +35,12 @@ pub struct ClaudeProxyInfo {
 }
 
 fn extract_port(url: &str, scheme: &str) -> String {
-    let remainder = url.trim().trim_start_matches(scheme).trim_start_matches("://");
+    let remainder = url
+        .trim()
+        .trim_start_matches(scheme)
+        .trim_start_matches("://");
     let remainder = remainder.trim_end_matches('/');
-    remainder
-        .splitn(2, ':')
-        .nth(1)
-        .unwrap_or("")
-        .to_string()
+    remainder.splitn(2, ':').nth(1).unwrap_or("").to_string()
 }
 
 #[tauri::command]
@@ -52,7 +51,10 @@ pub async fn get_claude_proxy() -> Result<Option<ClaudeProxyInfo>, String> {
         _ => return Ok(None),
     };
 
-    let has_proxy = env.get("HTTP_PROXY").or_else(|| env.get("HTTPS_PROXY")).or_else(|| env.get("ALL_PROXY"));
+    let has_proxy = env
+        .get("HTTP_PROXY")
+        .or_else(|| env.get("HTTPS_PROXY"))
+        .or_else(|| env.get("ALL_PROXY"));
     match has_proxy {
         Some(v) if v.as_str().map(|s| !s.is_empty()).unwrap_or(false) => {}
         _ => return Ok(None),
@@ -80,10 +82,7 @@ pub async fn get_claude_proxy() -> Result<Option<ClaudeProxyInfo>, String> {
 }
 
 #[tauri::command]
-pub async fn set_claude_proxy(
-    http_port: String,
-    socks5_port: String,
-) -> Result<(), String> {
+pub async fn set_claude_proxy(http_port: String, socks5_port: String) -> Result<(), String> {
     let mut settings = read_claude_settings()?;
     if !settings.is_object() {
         settings = serde_json::json!({});
@@ -155,7 +154,11 @@ pub async fn test_proxy(proxy_type: String, host: String, port: String) -> Resul
 }
 
 #[tauri::command]
-pub async fn get_current_ip(proxy_type: Option<String>, host: Option<String>, port: Option<String>) -> Result<String, String> {
+pub async fn get_current_ip(
+    proxy_type: Option<String>,
+    host: Option<String>,
+    port: Option<String>,
+) -> Result<String, String> {
     let client_builder = reqwest::Client::builder().timeout(std::time::Duration::from_secs(10));
 
     let client = if let (Some(pt), Some(h), Some(p)) = (proxy_type, host, port) {
@@ -170,7 +173,9 @@ pub async fn get_current_ip(proxy_type: Option<String>, host: Option<String>, po
             .build()
             .map_err(|e| format!("创建客户端失败: {e}"))?
     } else {
-        client_builder.build().map_err(|e| format!("创建客户端失败: {e}"))?
+        client_builder
+            .build()
+            .map_err(|e| format!("创建客户端失败: {e}"))?
     };
 
     let resp = client

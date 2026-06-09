@@ -121,13 +121,17 @@ export function ClaudeProxy() {
       const results: string[] = [];
       if (httpPort) {
         const msg = await invoke<string>("test_proxy", {
-          proxyType: "http", host: "127.0.0.1", port: httpPort,
+          proxyType: "http",
+          host: "127.0.0.1",
+          port: httpPort,
         });
         results.push(`HTTP: ${msg}`);
       }
       if (socks5Port) {
         const msg = await invoke<string>("test_proxy", {
-          proxyType: "socks5", host: "127.0.0.1", port: socks5Port,
+          proxyType: "socks5",
+          host: "127.0.0.1",
+          port: socks5Port,
         });
         results.push(`SOCKS5: ${msg}`);
       }
@@ -166,7 +170,8 @@ export function ClaudeProxy() {
     setSocks5Port(preset.socks5Port);
   };
 
-  const hasConfig = currentConfig && (currentConfig.http_port || currentConfig.socks5_port);
+  const hasConfig =
+    currentConfig && (currentConfig.http_port || currentConfig.socks5_port);
 
   return (
     <div className="relative w-full h-full flex flex-col bg-background">
@@ -359,9 +364,7 @@ export function ClaudeProxy() {
                 <div className="space-y-2">
                   <div className="flex items-center gap-2 text-xs">
                     <XCircle className="w-3.5 h-3.5 text-muted-foreground" />
-                    <span className="text-muted-foreground">
-                      未配置代理
-                    </span>
+                    <span className="text-muted-foreground">未配置代理</span>
                   </div>
                   <p className="text-[11px] text-muted-foreground">
                     Claude CLI 当前使用默认网络连接

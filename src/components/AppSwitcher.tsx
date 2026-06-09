@@ -67,8 +67,12 @@ export function AppSwitcher({
   });
 
   return (
-    <div className={cn("inline-flex bg-muted rounded-xl transition-all duration-200", compact ? "p-0.5 gap-1" : "p-1 gap-1")}>
-
+    <div
+      className={cn(
+        "inline-flex bg-muted rounded-xl transition-all duration-200",
+        compact ? "p-0.5 gap-1" : "p-1 gap-1",
+      )}
+    >
       {appsToShow.map((app) => {
         const badgeConfig = APP_BADGE_ICON[app];
         const BadgeIcon = badgeConfig?.icon;
@@ -104,7 +108,9 @@ export function AppSwitcher({
                   aria-hidden="true"
                 >
                   <BadgeIcon
-                    className={cn(compact ? "h-[7px] w-[7px]" : "h-[8px] w-[8px]")}
+                    className={cn(
+                      compact ? "h-[7px] w-[7px]" : "h-[8px] w-[8px]",
+                    )}
                     strokeWidth={2.5}
                     style={
                       badgeConfig?.offsetY

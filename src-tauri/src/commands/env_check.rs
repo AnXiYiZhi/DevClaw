@@ -1,9 +1,9 @@
 use std::collections::HashMap;
+#[cfg(target_os = "windows")]
+use std::os::windows::process::CommandExt;
 use std::process::Command;
 use tauri::Emitter;
 use tauri_plugin_opener::OpenerExt;
-#[cfg(target_os = "windows")]
-use std::os::windows::process::CommandExt;
 
 /// 缓存 shell PATH，安装工具后可清除以触发重新计算
 static SHELL_PATH_CACHE: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
@@ -20,8 +20,7 @@ fn compute_shell_path() -> String {
 
     #[cfg(not(target_os = "windows"))]
     {
-        let shell_path = get_shell_path_from_login_shell()
-            .or_else(get_shell_path_from_env_file);
+        let shell_path = get_shell_path_from_login_shell().or_else(get_shell_path_from_env_file);
 
         if let Some(sp) = shell_path {
             if !sp.is_empty() {
@@ -139,7 +138,10 @@ fn get_shell_path_from_env_file() -> Option<String> {
     if extra_paths.is_empty() {
         return None;
     }
-    log::debug!("[env_check] 从 shell 配置文件提取到额外 PATH: {:?}", extra_paths);
+    log::debug!(
+        "[env_check] 从 shell 配置文件提取到额外 PATH: {:?}",
+        extra_paths
+    );
     let current = std::env::var("PATH").unwrap_or_default();
     let mut merged = extra_paths.join(":");
     if !current.is_empty() {
@@ -156,7 +158,13 @@ fn extract_first_line(stdout: Vec<u8>, stderr: Vec<u8>) -> Option<String> {
     let extract = |data: &[u8]| {
         String::from_utf8(data.to_vec())
             .ok()
-            .map(|s| s.lines().find(|l| !l.trim().is_empty()).unwrap_or("").trim().to_string())
+            .map(|s| {
+                s.lines()
+                    .find(|l| !l.trim().is_empty())
+                    .unwrap_or("")
+                    .trim()
+                    .to_string()
+            })
             .filter(|s| !s.is_empty())
     };
     extract(&stdout).or_else(|| extract(&stderr))
@@ -183,9 +191,13 @@ fn get_command_output(cmd: &str, args: &[&str]) -> Option<String> {
         if let Some(exe_path) = find_in_path(cmd, &path) {
             let mut c = Command::new(&exe_path);
             c.creation_flags(0x08000000);
-            if let Some(r) = c.args(args).env("PATH", &path).output().ok()
-                .and_then(|o| if o.status.success() { extract_first_line(o.stdout, o.stderr) } else { None })
-            {
+            if let Some(r) = c.args(args).env("PATH", &path).output().ok().and_then(|o| {
+                if o.status.success() {
+                    extract_first_line(o.stdout, o.stderr)
+                } else {
+                    None
+                }
+            }) {
                 log::debug!("[env_check] {} 绝对路径结果: {:?}", cmd, r);
                 return Some(r);
             }
@@ -206,7 +218,11 @@ fn get_command_output(cmd: &str, args: &[&str]) -> Option<String> {
                 if o.status.success() {
                     extract_first_line(o.stdout, o.stderr)
                 } else {
-                    log::debug!("[env_check] {} stderr: {}", cmd, String::from_utf8_lossy(&o.stderr).trim());
+                    log::debug!(
+                        "[env_check] {} stderr: {}",
+                        cmd,
+                        String::from_utf8_lossy(&o.stderr).trim()
+                    );
                     None
                 }
             });
@@ -232,7 +248,11 @@ fn get_command_output(cmd: &str, args: &[&str]) -> Option<String> {
                 if o.status.success() {
                     extract_first_line(o.stdout, o.stderr)
                 } else {
-                    log::debug!("[env_check] {} stderr: {}", cmd, String::from_utf8_lossy(&o.stderr).trim());
+                    log::debug!(
+                        "[env_check] {} stderr: {}",
+                        cmd,
+                        String::from_utf8_lossy(&o.stderr).trim()
+                    );
                     None
                 }
             });
@@ -248,18 +268,13 @@ fn get_command_output_at(exe_path: &str, args: &[&str]) -> Option<String> {
     let mut c = Command::new(exe_path);
     #[cfg(target_os = "windows")]
     c.creation_flags(0x08000000);
-    let result = c
-        .args(args)
-        .env("PATH", &path)
-        .output()
-        .ok()
-        .and_then(|o| {
-            if o.status.success() {
-                extract_first_line(o.stdout, o.stderr)
-            } else {
-                None
-            }
-        });
+    let result = c.args(args).env("PATH", &path).output().ok().and_then(|o| {
+        if o.status.success() {
+            extract_first_line(o.stdout, o.stderr)
+        } else {
+            None
+        }
+    });
     log::debug!("[env_check] {} 结果: {:?}", exe_path, result);
     result
 }
@@ -362,7 +377,10 @@ fn detect_chrome() -> Option<String> {
         let beacon_paths = [
             (HKEY_CURRENT_USER, r"SOFTWARE\Google\Chrome\BLBeacon"),
             (HKEY_LOCAL_MACHINE, r"SOFTWARE\Google\Chrome\BLBeacon"),
-            (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Google\Chrome\BLBeacon"),
+            (
+                HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\WOW6432Node\Google\Chrome\BLBeacon",
+            ),
         ];
         for (hive, path) in &beacon_paths {
             if let Ok(key) = RegKey::predef(*hive).open_subkey_with_flags(path, KEY_READ) {
@@ -377,9 +395,18 @@ fn detect_chrome() -> Option<String> {
 
         // 方法2：从 App Paths 读 exe 路径，执行 --version
         let app_paths = [
-            (HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"),
-            (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"),
-            (HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"),
+            (
+                HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+            ),
+            (
+                HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+            ),
+            (
+                HKEY_CURRENT_USER,
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+            ),
         ];
         for (hive, path) in &app_paths {
             if let Ok(key) = RegKey::predef(*hive).open_subkey_with_flags(path, KEY_READ) {
@@ -499,7 +526,14 @@ pub async fn fix_npm_registry() -> (bool, String) {
             let mut c = Command::new("cmd");
             c.creation_flags(0x08000000);
             match c
-                .args(["/C", "npm", "config", "set", "registry", "https://registry.npmjs.org"])
+                .args([
+                    "/C",
+                    "npm",
+                    "config",
+                    "set",
+                    "registry",
+                    "https://registry.npmjs.org",
+                ])
                 .env("PATH", &path)
                 .output()
             {
@@ -548,16 +582,33 @@ fn run_cmd_silent(exe: &str, args: &[&str], path: &str) -> bool {
     let mut c = Command::new(exe);
     #[cfg(target_os = "windows")]
     c.creation_flags(0x08000000);
-    c.args(args).env("PATH", path).output().map(|o| o.status.success()).unwrap_or(false)
+    c.args(args)
+        .env("PATH", path)
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
 }
 
 /// 执行命令并捕获输出，写入详细日志
-fn run_cmd_logged(tool: &str, label: &str, exe: &str, args: &[&str], path: &str) -> (bool, String, String) {
+fn run_cmd_logged(
+    tool: &str,
+    label: &str,
+    exe: &str,
+    args: &[&str],
+    path: &str,
+) -> (bool, String, String) {
     run_cmd_logged_with_accept(tool, label, exe, args, path, &[])
 }
 
 /// 执行命令并捕获输出，写入详细日志（可指定"可接受"的退出码，视为成功）
-fn run_cmd_logged_with_accept(tool: &str, label: &str, exe: &str, args: &[&str], path: &str, accept_codes: &[i32]) -> (bool, String, String) {
+fn run_cmd_logged_with_accept(
+    tool: &str,
+    label: &str,
+    exe: &str,
+    args: &[&str],
+    path: &str,
+    accept_codes: &[i32],
+) -> (bool, String, String) {
     let mut c = Command::new(exe);
     #[cfg(target_os = "windows")]
     c.creation_flags(0x08000000);
@@ -571,7 +622,11 @@ fn run_cmd_logged_with_accept(tool: &str, label: &str, exe: &str, args: &[&str],
             let success = o.status.success() || accept_codes.contains(&code);
             let mut log_entry = format!(
                 "[{}] {} | 退出码: {}\n  命令: {}\n  PATH: {}",
-                label, if success { "成功" } else { "失败" }, code, cmd_str, path
+                label,
+                if success { "成功" } else { "失败" },
+                code,
+                cmd_str,
+                path
             );
             if !stdout.trim().is_empty() {
                 log_entry.push_str(&format!("\n  stdout:\n{}", stdout.trim()));
@@ -583,10 +638,14 @@ fn run_cmd_logged_with_accept(tool: &str, label: &str, exe: &str, args: &[&str],
             (success, stdout, stderr)
         }
         Err(e) => {
-            append_install_log(tool, false, &format!(
-                "[{}] 执行失败\n  命令: {}\n  PATH: {}\n  错误: {}",
-                label, cmd_str, path, e
-            ));
+            append_install_log(
+                tool,
+                false,
+                &format!(
+                    "[{}] 执行失败\n  命令: {}\n  PATH: {}\n  错误: {}",
+                    label, cmd_str, path, e
+                ),
+            );
             (false, String::new(), format!("执行失败: {}", e))
         }
     }
@@ -594,13 +653,15 @@ fn run_cmd_logged_with_accept(tool: &str, label: &str, exe: &str, args: &[&str],
 
 /// 从 stderr 提取错误原因（优先 Error 行，否则最后一行有意义的内容）
 fn error_reason(stderr: &str) -> &str {
-    let err_line = stderr.lines()
+    let err_line = stderr
+        .lines()
         .filter(|l| l.contains("Error:") || l.contains("error:"))
         .last();
     if let Some(e) = err_line {
         return e.trim();
     }
-    stderr.lines()
+    stderr
+        .lines()
         .filter(|l| !l.trim().is_empty())
         .last()
         .unwrap_or("未知错误")
@@ -650,7 +711,8 @@ fn is_node_managed_by_brew() -> bool {
         find_in_path("node", &get_shell_path())
             .map(|p| {
                 let path_str = p.to_lowercase();
-                path_str.starts_with("/opt/homebrew/") || path_str.starts_with("/usr/local/cellar/")
+                path_str.starts_with("/opt/homebrew/")
+                    || path_str.starts_with("/usr/local/cellar/")
                     || path_str.starts_with("/usr/local/opt/")
             })
             .unwrap_or(false)
@@ -665,16 +727,21 @@ fn is_node_managed_by_brew() -> bool {
 #[cfg(target_os = "windows")]
 fn install_python_direct_fallback(path: &str, window: &tauri::Window) -> bool {
     let emit = |pct: u32| {
-        let _ = window.emit("install_progress", serde_json::json!({
-            "tool": "python", "progress": pct, "done": false
-        }));
+        let _ = window.emit(
+            "install_progress",
+            serde_json::json!({
+                "tool": "python", "progress": pct, "done": false
+            }),
+        );
     };
 
     emit(40);
 
     // 用 PowerShell 下载 Python 安装程序到临时目录
-    let installer_path = format!(r"{}\python-installer.exe",
-        std::env::var("TEMP").unwrap_or_else(|_| r"C:\Windows\Temp".to_string()));
+    let installer_path = format!(
+        r"{}\python-installer.exe",
+        std::env::var("TEMP").unwrap_or_else(|_| r"C:\Windows\Temp".to_string())
+    );
     let download_url = "https://www.python.org/ftp/python/3.12.10/python-3.12.10-amd64.exe";
 
     append_install_log("python", true, &format!("[回退] 下载: {}", download_url));
@@ -697,7 +764,11 @@ fn install_python_direct_fallback(path: &str, window: &tauri::Window) -> bool {
         }
         Ok(o) => {
             let stderr = String::from_utf8_lossy(&o.stderr);
-            append_install_log("python", false, &format!("[回退] 下载失败: {}", stderr.trim()));
+            append_install_log(
+                "python",
+                false,
+                &format!("[回退] 下载失败: {}", stderr.trim()),
+            );
             return false;
         }
         Err(e) => {
@@ -721,7 +792,15 @@ fn install_python_direct_fallback(path: &str, window: &tauri::Window) -> bool {
             let success = o.status.success();
             if !success {
                 let stderr = String::from_utf8_lossy(&o.stderr);
-                append_install_log("python", false, &format!("[回退] 安装程序退出码: {:?}, stderr: {}", o.status.code(), stderr.trim()));
+                append_install_log(
+                    "python",
+                    false,
+                    &format!(
+                        "[回退] 安装程序退出码: {:?}, stderr: {}",
+                        o.status.code(),
+                        stderr.trim()
+                    ),
+                );
             }
             success
         }
@@ -743,20 +822,31 @@ fn install_python_direct_fallback(path: &str, window: &tauri::Window) -> bool {
 fn refresh_path_after_install(tool: &str) {
     // Python 安装后会添加到用户 PATH（HKCU\Environment\Path）
     // 读取最新的系统+用户 PATH 并更新当前进程环境变量
-    let sys_path = read_registry_path(r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment", true);
+    let sys_path = read_registry_path(
+        r"SYSTEM\CurrentControlSet\Control\Session Manager\Environment",
+        true,
+    );
     let user_path = read_registry_path(r"Environment", false);
 
     let mut paths: Vec<String> = Vec::new();
     for p in sys_path.split(';').chain(user_path.split(';')) {
         let trimmed = p.trim();
-        if !trimmed.is_empty() && !paths.iter().any(|existing| existing.eq_ignore_ascii_case(trimmed)) {
+        if !trimmed.is_empty()
+            && !paths
+                .iter()
+                .any(|existing| existing.eq_ignore_ascii_case(trimmed))
+        {
             paths.push(trimmed.to_string());
         }
     }
     let new_path = paths.join(";");
     if !new_path.is_empty() {
         std::env::set_var("PATH", &new_path);
-        log::info!("[install] {} 安装后刷新 PATH ({} 个条目)", tool, paths.len());
+        log::info!(
+            "[install] {} 安装后刷新 PATH ({} 个条目)",
+            tool,
+            paths.len()
+        );
     }
 }
 
@@ -766,7 +856,11 @@ fn read_registry_path(key_path: &str, is_hklm: bool) -> String {
     use winreg::enums::*;
     use winreg::RegKey;
 
-    let root = if is_hklm { HKEY_LOCAL_MACHINE } else { HKEY_CURRENT_USER };
+    let root = if is_hklm {
+        HKEY_LOCAL_MACHINE
+    } else {
+        HKEY_CURRENT_USER
+    };
     let root_key = RegKey::predef(root);
     match root_key.open_subkey_with_flags(key_path, KEY_READ) {
         Ok(k) => k.get_value::<String, _>("Path").unwrap_or_default(),
@@ -779,8 +873,16 @@ fn read_registry_path(key_path: &str, is_hklm: bool) -> String {
 /// uninstall_first=false: 直接安装（首次安装场景）
 /// 进度：0-30% 卸载阶段（仅 uninstall_first=true），30-100% 安装阶段
 #[tauri::command]
-pub async fn install_tool(tool: String, uninstall_first: bool, window: tauri::Window) -> (bool, String) {
-    append_install_log(&tool, true, &format!("开始安装 (uninstall_first={})", uninstall_first));
+pub async fn install_tool(
+    tool: String,
+    uninstall_first: bool,
+    window: tauri::Window,
+) -> (bool, String) {
+    append_install_log(
+        &tool,
+        true,
+        &format!("开始安装 (uninstall_first={})", uninstall_first),
+    );
 
     let result = tauri::async_runtime::spawn_blocking({
         let tool = tool.clone();
@@ -793,7 +895,11 @@ pub async fn install_tool(tool: String, uninstall_first: bool, window: tauri::Wi
     result
 }
 
-fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window) -> (bool, String) {
+fn install_tool_inner(
+    tool: String,
+    uninstall_first: bool,
+    window: tauri::Window,
+) -> (bool, String) {
     let path = get_shell_path();
 
     #[cfg(target_os = "windows")]
@@ -804,9 +910,12 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
         use std::time::Duration;
 
         let emit = |pct: u32| {
-            let _ = window.emit("install_progress", serde_json::json!({
-                "tool": &tool, "progress": pct, "done": false
-            }));
+            let _ = window.emit(
+                "install_progress",
+                serde_json::json!({
+                    "tool": &tool, "progress": pct, "done": false
+                }),
+            );
         };
 
         // ── 卸载阶段 (0% → 30%)，仅 uninstall_first=true ────────────────
@@ -817,74 +926,179 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                     if is_node_managed_by_nvm() {
                         // nvm 管理的 node：用 nvm uninstall 卸载当前版本
                         log::info!("[uninstall] 检测到 nvm 管理的 node，使用 nvm uninstall");
-                        steps.push(("nvm uninstall current", vec!["cmd", "/C", "nvm", "uninstall", "current"]));
+                        steps.push((
+                            "nvm uninstall current",
+                            vec!["cmd", "/C", "nvm", "uninstall", "current"],
+                        ));
                     } else {
                         // 非 nvm 管理：用 winget 卸载
-                        steps.push(("winget node",   vec!["cmd", "/C", "winget", "uninstall", "OpenJS.NodeJS", "--silent"]));
-                        steps.push(("winget node lts",vec!["cmd", "/C", "winget", "uninstall", "OpenJS.NodeJS.LTS", "--silent"]));
+                        steps.push((
+                            "winget node",
+                            vec![
+                                "cmd",
+                                "/C",
+                                "winget",
+                                "uninstall",
+                                "OpenJS.NodeJS",
+                                "--silent",
+                            ],
+                        ));
+                        steps.push((
+                            "winget node lts",
+                            vec![
+                                "cmd",
+                                "/C",
+                                "winget",
+                                "uninstall",
+                                "OpenJS.NodeJS.LTS",
+                                "--silent",
+                            ],
+                        ));
                     }
-                    steps.push(("rm nodejs dir", vec!["__rm_dir__", r"C:\Program Files\nodejs"]));
-                    steps.push(("rm npm",        vec!["__rm_dir__", r"__APPDATA__\npm"]));
-                    steps.push(("rm npm-cache",  vec!["__rm_dir__", r"__APPDATA__\npm-cache"]));
+                    steps.push((
+                        "rm nodejs dir",
+                        vec!["__rm_dir__", r"C:\Program Files\nodejs"],
+                    ));
+                    steps.push(("rm npm", vec!["__rm_dir__", r"__APPDATA__\npm"]));
+                    steps.push(("rm npm-cache", vec!["__rm_dir__", r"__APPDATA__\npm-cache"]));
                     steps
                 }
-            // python 不卸载，winget install --force 会覆盖安装
-            "python" => vec![],
-            "git" => vec![
-                ("winget git",   vec!["cmd", "/C", "winget", "uninstall", "Git.Git", "--silent"]),
-                ("rm git dir",   vec!["__rm_dir__", r"C:\Program Files\Git"]),
-            ],
-            "vscode" => vec![
-                ("winget vscode",   vec!["cmd", "/C", "winget", "uninstall", "Microsoft.VisualStudioCode", "--silent"]),
-                ("rm vscode dir",   vec!["__rm_dir__", r"__LOCALAPPDATA__\Programs\Microsoft VS Code"]),
-            ],
-            "chrome" => vec![
-                ("kill chrome",     vec!["cmd", "/C", "taskkill", "/F", "/IM", "chrome.exe"]),
-                ("winget chrome",   vec!["cmd", "/C", "winget", "uninstall", "Google.Chrome", "--silent"]),
-                ("rm chrome dir",   vec!["__rm_dir__", r"__LOCALAPPDATA__\Google\Chrome"]),
-            ],
-            "claude" => {
-                let mut steps = Vec::new();
-                // 只有 npm 可用时才执行 npm uninstall
-                if which::which("npm").is_ok() {
-                    steps.push(("npm uninstall claude", vec!["cmd", "/C", "npm", "uninstall", "-g", "@anthropic-ai/claude-code"]));
+                // python 不卸载，winget install --force 会覆盖安装
+                "python" => vec![],
+                "git" => vec![
+                    (
+                        "winget git",
+                        vec!["cmd", "/C", "winget", "uninstall", "Git.Git", "--silent"],
+                    ),
+                    ("rm git dir", vec!["__rm_dir__", r"C:\Program Files\Git"]),
+                ],
+                "vscode" => vec![
+                    (
+                        "winget vscode",
+                        vec![
+                            "cmd",
+                            "/C",
+                            "winget",
+                            "uninstall",
+                            "Microsoft.VisualStudioCode",
+                            "--silent",
+                        ],
+                    ),
+                    (
+                        "rm vscode dir",
+                        vec!["__rm_dir__", r"__LOCALAPPDATA__\Programs\Microsoft VS Code"],
+                    ),
+                ],
+                "chrome" => vec![
+                    (
+                        "kill chrome",
+                        vec!["cmd", "/C", "taskkill", "/F", "/IM", "chrome.exe"],
+                    ),
+                    (
+                        "winget chrome",
+                        vec![
+                            "cmd",
+                            "/C",
+                            "winget",
+                            "uninstall",
+                            "Google.Chrome",
+                            "--silent",
+                        ],
+                    ),
+                    (
+                        "rm chrome dir",
+                        vec!["__rm_dir__", r"__LOCALAPPDATA__\Google\Chrome"],
+                    ),
+                ],
+                "claude" => {
+                    let mut steps = Vec::new();
+                    // 只有 npm 可用时才执行 npm uninstall
+                    if which::which("npm").is_ok() {
+                        steps.push((
+                            "npm uninstall claude",
+                            vec![
+                                "cmd",
+                                "/C",
+                                "npm",
+                                "uninstall",
+                                "-g",
+                                "@anthropic-ai/claude-code",
+                            ],
+                        ));
+                    }
+                    // 只删除 claude 可执行文件，不删除整个目录
+                    steps.push((
+                        "rm claude exe",
+                        vec!["__rm_file__", r"__USERPROFILE__\.local\bin\claude.exe"],
+                    ));
+                    steps.push((
+                        "rm claude cmd",
+                        vec!["__rm_file__", r"__USERPROFILE__\.local\bin\claude"],
+                    ));
+                    steps
                 }
-                // 只删除 claude 可执行文件，不删除整个目录
-                steps.push(("rm claude exe", vec!["__rm_file__", r"__USERPROFILE__\.local\bin\claude.exe"]));
-                steps.push(("rm claude cmd", vec!["__rm_file__", r"__USERPROFILE__\.local\bin\claude"]));
-                steps
-            },
-            _ => vec![],
-        }
-        ;
+                _ => vec![],
+            };
 
-        let total = uninstall_steps.len() as u32;
-        for (i, (label, args)) in uninstall_steps.iter().enumerate() {
-            let pct = ((i as u32 + 1) * 30) / total.max(1);
-            emit(pct);
-            let p = args[1]
-                .replace("__APPDATA__", &std::env::var("APPDATA").unwrap_or_default())
-                .replace("__LOCALAPPDATA__", &std::env::var("LOCALAPPDATA").unwrap_or_default())
-                .replace("__USERPROFILE__", &std::env::var("USERPROFILE").unwrap_or_default());
-            if args[0] == "__rm_dir__" {
-                let exists = std::path::Path::new(&p).exists();
-                let ok = remove_dir_silent(&p);
-                append_install_log(&tool, ok, &format!("[卸载:{}] 删除目录 '{}' (存在: {})", label, p, exists));
-            } else if args[0] == "__rm_file__" {
-                let path = std::path::Path::new(&p);
-                let exists = path.exists();
-                let ok = if exists { std::fs::remove_file(path).is_ok() } else { true };
-                append_install_log(&tool, ok, &format!("[卸载:{}] 删除文件 '{}' (存在: {})", label, p, exists));
-            } else {
-                // winget 卸载时，"未找到包"(-1978335212) 视为成功
-                let is_winget_uninstall = args.len() > 2 && args[1] == "/C" && args.get(2) == Some(&"winget") && args.get(3) == Some(&"uninstall");
-                let accept: &[i32] = if is_winget_uninstall { &[-1978335212] } else { &[] };
-                let _ = run_cmd_logged_with_accept(&tool, &format!("卸载:{}", label), args[0], &args[1..], &path, accept);
+            let total = uninstall_steps.len() as u32;
+            for (i, (label, args)) in uninstall_steps.iter().enumerate() {
+                let pct = ((i as u32 + 1) * 30) / total.max(1);
+                emit(pct);
+                let p = args[1]
+                    .replace("__APPDATA__", &std::env::var("APPDATA").unwrap_or_default())
+                    .replace(
+                        "__LOCALAPPDATA__",
+                        &std::env::var("LOCALAPPDATA").unwrap_or_default(),
+                    )
+                    .replace(
+                        "__USERPROFILE__",
+                        &std::env::var("USERPROFILE").unwrap_or_default(),
+                    );
+                if args[0] == "__rm_dir__" {
+                    let exists = std::path::Path::new(&p).exists();
+                    let ok = remove_dir_silent(&p);
+                    append_install_log(
+                        &tool,
+                        ok,
+                        &format!("[卸载:{}] 删除目录 '{}' (存在: {})", label, p, exists),
+                    );
+                } else if args[0] == "__rm_file__" {
+                    let path = std::path::Path::new(&p);
+                    let exists = path.exists();
+                    let ok = if exists {
+                        std::fs::remove_file(path).is_ok()
+                    } else {
+                        true
+                    };
+                    append_install_log(
+                        &tool,
+                        ok,
+                        &format!("[卸载:{}] 删除文件 '{}' (存在: {})", label, p, exists),
+                    );
+                } else {
+                    // winget 卸载时，"未找到包"(-1978335212) 视为成功
+                    let is_winget_uninstall = args.len() > 2
+                        && args[1] == "/C"
+                        && args.get(2) == Some(&"winget")
+                        && args.get(3) == Some(&"uninstall");
+                    let accept: &[i32] = if is_winget_uninstall {
+                        &[-1978335212]
+                    } else {
+                        &[]
+                    };
+                    let _ = run_cmd_logged_with_accept(
+                        &tool,
+                        &format!("卸载:{}", label),
+                        args[0],
+                        &args[1..],
+                        &path,
+                        accept,
+                    );
+                }
             }
-        }
 
-        // 卸载完成后等待 2 秒
-        std::thread::sleep(Duration::from_secs(2));
+            // 卸载完成后等待 2 秒
+            std::thread::sleep(Duration::from_secs(2));
         } // end if uninstall_first
 
         // ── 安装阶段 (30% → 100%) ────────────────────────────────────────
@@ -937,7 +1151,10 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
             std::thread::spawn(move || {
                 let reader = BufReader::new(stdout);
                 for line in reader.lines() {
-                    let line = match line { Ok(l) => l, Err(_) => continue };
+                    let line = match line {
+                        Ok(l) => l,
+                        Err(_) => continue,
+                    };
                     log::debug!("[install] {}", line);
                     log_buf.lock().unwrap().push_str(&line);
                     log_buf.lock().unwrap().push('\n');
@@ -947,9 +1164,12 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                             if pct > *last {
                                 *last = pct;
                                 let mapped = 30 + pct * 70 / 100;
-                                let _ = win.emit("install_progress", serde_json::json!({
-                                    "tool": &tool, "progress": mapped, "done": false
-                                }));
+                                let _ = win.emit(
+                                    "install_progress",
+                                    serde_json::json!({
+                                        "tool": &tool, "progress": mapped, "done": false
+                                    }),
+                                );
                             }
                         }
                     }
@@ -985,11 +1205,16 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                 let mut last = last_timer.lock().unwrap();
                 if *last < 90 {
                     *last += 15;
-                    if *last > 90 { *last = 90; }
+                    if *last > 90 {
+                        *last = 90;
+                    }
                     let mapped = 30 + *last * 70 / 100;
-                    let _ = win_timer.emit("install_progress", serde_json::json!({
-                        "tool": &tool_timer, "progress": mapped, "done": false
-                    }));
+                    let _ = win_timer.emit(
+                        "install_progress",
+                        serde_json::json!({
+                            "tool": &tool_timer, "progress": mapped, "done": false
+                        }),
+                    );
                 }
             }
         });
@@ -1006,14 +1231,22 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
         // "已安装相同或更高版本" 视为成功
         if !success && exit_code == -1978335189 {
             success = true;
-            append_install_log(&tool, true, &format!("已安装相同或更高版本 (退出码: {})", exit_code));
+            append_install_log(
+                &tool,
+                true,
+                &format!("已安装相同或更高版本 (退出码: {})", exit_code),
+            );
         }
 
         // Python: winget 失败时尝试直接下载安装程序（绕过组织策略）
         if !success && tool == "python" {
             let policy_codes = [-1978334961i32, -1978335184]; // 组织策略阻止 / 安装程序正在运行
             if policy_codes.contains(&exit_code) {
-                append_install_log(&tool, true, "[回退] winget 安装失败，尝试直接下载安装程序...");
+                append_install_log(
+                    &tool,
+                    true,
+                    "[回退] winget 安装失败，尝试直接下载安装程序...",
+                );
                 let fallback_ok = install_python_direct_fallback(&path, &window);
                 if fallback_ok {
                     success = true;
@@ -1039,7 +1272,7 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                     } else {
                         "安装失败"
                     }
-                },
+                }
             };
             format!("{} (退出码: {})", reason, exit_code)
         };
@@ -1047,10 +1280,18 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
 
         // 记录详细输出
         if !stdout_content.trim().is_empty() {
-            append_install_log(&tool, true, &format!("[安装:stdout]\n{}", stdout_content.trim()));
+            append_install_log(
+                &tool,
+                true,
+                &format!("[安装:stdout]\n{}", stdout_content.trim()),
+            );
         }
         if !stderr_content.trim().is_empty() {
-            append_install_log(&tool, false, &format!("[安装:stderr]\n{}", stderr_content.trim()));
+            append_install_log(
+                &tool,
+                false,
+                &format!("[安装:stderr]\n{}", stderr_content.trim()),
+            );
         }
 
         // 安装成功后刷新 PATH，确保后续检测能找到新安装的工具
@@ -1059,9 +1300,12 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
             invalidate_shell_path_cache();
         }
 
-        let _ = window.emit("install_progress", serde_json::json!({
-            "tool": &tool, "progress": 100, "done": true
-        }));
+        let _ = window.emit(
+            "install_progress",
+            serde_json::json!({
+                "tool": &tool, "progress": 100, "done": true
+            }),
+        );
 
         (success, msg)
     }
@@ -1070,118 +1314,133 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
     {
         // ── 卸载阶段 (0% → 30%) ──────────────────────────────────────────
         let emit = |pct: u32| {
-            let _ = window.emit("install_progress", serde_json::json!({
-                "tool": &tool, "progress": pct, "done": false
-            }));
+            let _ = window.emit(
+                "install_progress",
+                serde_json::json!({
+                    "tool": &tool, "progress": pct, "done": false
+                }),
+            );
         };
 
         let home = std::env::var("HOME").unwrap_or_default();
 
         // ── 卸载阶段 (0% → 30%)，仅 uninstall_first=true ────────────────
         if uninstall_first {
-        // 类型: ("__cmd__", cmd) 执行 shell 命令 | ("__rm__", path) 删除目录
-        let uninstall_steps: Vec<(&str, &str)> = match tool.as_str() {
-            "nodejs" | "npm" => {
-                let mut steps = Vec::new();
-                if is_node_managed_by_nvm() {
-                    log::info!("[uninstall] 检测到 nvm 管理的 node，使用 nvm uninstall");
-                    steps.push(("__cmd__", "test -s ~/.nvm/nvm.sh && . ~/.nvm/nvm.sh 2>/dev/null && v=$(nvm current) && nvm deactivate 2>/dev/null; nvm uninstall $v 2>&1 || true"));
-                } else if is_node_managed_by_brew() {
-                    log::info!("[uninstall] 检测到 brew 管理的 node，使用 brew uninstall");
-                    steps.push(("__cmd__", "brew uninstall node 2>/dev/null; true"));
-                    steps.push(("__cmd__", "brew uninstall node@22 2>/dev/null; brew uninstall node@20 2>/dev/null; brew uninstall node@18 2>/dev/null; true"));
-                } else {
-                    // 都不是，尝试全部
-                    steps.push(("__cmd__", "brew uninstall node 2>/dev/null; true"));
-                    steps.push(("__cmd__", "test -s ~/.nvm/nvm.sh && . ~/.nvm/nvm.sh 2>/dev/null && v=$(nvm current) && nvm deactivate 2>/dev/null; nvm uninstall $v 2>&1 || true"));
+            // 类型: ("__cmd__", cmd) 执行 shell 命令 | ("__rm__", path) 删除目录
+            let uninstall_steps: Vec<(&str, &str)> = match tool.as_str() {
+                "nodejs" | "npm" => {
+                    let mut steps = Vec::new();
+                    if is_node_managed_by_nvm() {
+                        log::info!("[uninstall] 检测到 nvm 管理的 node，使用 nvm uninstall");
+                        steps.push(("__cmd__", "test -s ~/.nvm/nvm.sh && . ~/.nvm/nvm.sh 2>/dev/null && v=$(nvm current) && nvm deactivate 2>/dev/null; nvm uninstall $v 2>&1 || true"));
+                    } else if is_node_managed_by_brew() {
+                        log::info!("[uninstall] 检测到 brew 管理的 node，使用 brew uninstall");
+                        steps.push(("__cmd__", "brew uninstall node 2>/dev/null; true"));
+                        steps.push(("__cmd__", "brew uninstall node@22 2>/dev/null; brew uninstall node@20 2>/dev/null; brew uninstall node@18 2>/dev/null; true"));
+                    } else {
+                        // 都不是，尝试全部
+                        steps.push(("__cmd__", "brew uninstall node 2>/dev/null; true"));
+                        steps.push(("__cmd__", "test -s ~/.nvm/nvm.sh && . ~/.nvm/nvm.sh 2>/dev/null && v=$(nvm current) && nvm deactivate 2>/dev/null; nvm uninstall $v 2>&1 || true"));
+                    }
+                    steps.push(("__rm__", "/usr/local/bin/node"));
+                    steps.push(("__rm__", "/opt/homebrew/bin/node"));
+                    steps.push(("__rm__", "/usr/local/bin/npm"));
+                    steps.push(("__rm__", "/opt/homebrew/bin/npm"));
+                    steps.push(("__rm_h__", "~/.npm"));
+                    steps.push(("__rm_h__", "~/.npm-cache"));
+                    steps
                 }
-                steps.push(("__rm__",  "/usr/local/bin/node"));
-                steps.push(("__rm__",  "/opt/homebrew/bin/node"));
-                steps.push(("__rm__",  "/usr/local/bin/npm"));
-                steps.push(("__rm__",  "/opt/homebrew/bin/npm"));
-                steps.push(("__rm_h__", "~/.npm"));
-                steps.push(("__rm_h__", "~/.npm-cache"));
-                steps
-            },
-            "python" => vec![
-                ("__cmd__", "brew uninstall python 2>/dev/null; true"),
-                ("__cmd__", "brew uninstall python3 2>/dev/null; true"),
-                ("__cmd__", "brew uninstall python@3.12 2>/dev/null; true"),
-                ("__rm__",  "/usr/local/bin/python3"),
-                ("__rm__",  "/opt/homebrew/bin/python3"),
-                ("__rm__",  "/usr/local/bin/pip3"),
-                ("__rm__",  "/opt/homebrew/bin/pip3"),
-            ],
-            "git" => vec![
-                ("__cmd__", "brew uninstall git 2>/dev/null; true"),
-                ("__rm__",  "/usr/local/bin/git"),
-                ("__rm__",  "/opt/homebrew/bin/git"),
-            ],
-            "vscode" => {
-                let mut steps = Vec::new();
-                steps.push(("__cmd__", "brew uninstall --cask visual-studio-code 2>/dev/null; true"));
-                steps.push(("__rm__",  "/Applications/Visual Studio Code.app"));
-                steps.push(("__rm_h__", "~/Library/Application Support/Code"));
-                steps.push(("__rm_h__", "~/.vscode"));
-                steps
-            },
-            "chrome" => {
-                let mut steps = Vec::new();
-                // 先杀掉 Chrome 进程，否则运行中的 .app bundle 被 macOS 锁定无法删除
-                steps.push(("__cmd__", "pkill -9 'Google Chrome' 2>/dev/null; true"));
-                // 尝试 brew 卸载（处理通过 brew 安装的情况）
-                steps.push(("__cmd__", "brew uninstall --cask google-chrome 2>/dev/null; true"));
-                steps.push(("__rm__",  "/Applications/Google Chrome.app"));
-                steps.push(("__rm_h__", "~/Library/Application Support/Google/Chrome"));
-                steps.push(("__rm_h__", "~/Library/Caches/Google/Chrome"));
-                steps.push(("__rm_h__", "~/Library/Caches/com.google.Chrome"));
-                steps
-            },
-            "claude" => {
-                let mut steps = Vec::new();
-                // 只有 npm 可用时才执行 npm uninstall
-                if which::which("npm").is_ok() {
-                    steps.push(("__cmd__", "npm uninstall -g @anthropic-ai/claude-code 2>/dev/null; true"));
+                "python" => vec![
+                    ("__cmd__", "brew uninstall python 2>/dev/null; true"),
+                    ("__cmd__", "brew uninstall python3 2>/dev/null; true"),
+                    ("__cmd__", "brew uninstall python@3.12 2>/dev/null; true"),
+                    ("__rm__", "/usr/local/bin/python3"),
+                    ("__rm__", "/opt/homebrew/bin/python3"),
+                    ("__rm__", "/usr/local/bin/pip3"),
+                    ("__rm__", "/opt/homebrew/bin/pip3"),
+                ],
+                "git" => vec![
+                    ("__cmd__", "brew uninstall git 2>/dev/null; true"),
+                    ("__rm__", "/usr/local/bin/git"),
+                    ("__rm__", "/opt/homebrew/bin/git"),
+                ],
+                "vscode" => {
+                    let mut steps = Vec::new();
+                    steps.push((
+                        "__cmd__",
+                        "brew uninstall --cask visual-studio-code 2>/dev/null; true",
+                    ));
+                    steps.push(("__rm__", "/Applications/Visual Studio Code.app"));
+                    steps.push(("__rm_h__", "~/Library/Application Support/Code"));
+                    steps.push(("__rm_h__", "~/.vscode"));
+                    steps
                 }
-                // 只删除 claude 可执行文件，不删除配置目录
-                steps.push(("__rm_f__", "~/.local/bin/claude"));
-                steps
-            },
-            _ => vec![],
-        };
+                "chrome" => {
+                    let mut steps = Vec::new();
+                    // 先杀掉 Chrome 进程，否则运行中的 .app bundle 被 macOS 锁定无法删除
+                    steps.push(("__cmd__", "pkill -9 'Google Chrome' 2>/dev/null; true"));
+                    // 尝试 brew 卸载（处理通过 brew 安装的情况）
+                    steps.push((
+                        "__cmd__",
+                        "brew uninstall --cask google-chrome 2>/dev/null; true",
+                    ));
+                    steps.push(("__rm__", "/Applications/Google Chrome.app"));
+                    steps.push(("__rm_h__", "~/Library/Application Support/Google/Chrome"));
+                    steps.push(("__rm_h__", "~/Library/Caches/Google/Chrome"));
+                    steps.push(("__rm_h__", "~/Library/Caches/com.google.Chrome"));
+                    steps
+                }
+                "claude" => {
+                    let mut steps = Vec::new();
+                    // 只有 npm 可用时才执行 npm uninstall
+                    if which::which("npm").is_ok() {
+                        steps.push((
+                            "__cmd__",
+                            "npm uninstall -g @anthropic-ai/claude-code 2>/dev/null; true",
+                        ));
+                    }
+                    // 只删除 claude 可执行文件，不删除配置目录
+                    steps.push(("__rm_f__", "~/.local/bin/claude"));
+                    steps
+                }
+                _ => vec![],
+            };
 
-        let total = uninstall_steps.len() as u32;
-        for (i, (kind, val)) in uninstall_steps.iter().enumerate() {
-            let pct = ((i as u32 + 1) * 30) / total.max(1);
-            emit(pct);
-            match *kind {
-                "__cmd__" => {
-                    let _ = run_cmd_logged(&tool, "卸载", "/bin/zsh", &["-c", val], &path);
-                }
-                "__rm__" => {
-                    if std::path::Path::new(val).exists() {
-                        let ok = remove_dir_silent(val);
-                        append_install_log(&tool, ok, &format!("[卸载] rm '{}'", val));
+            let total = uninstall_steps.len() as u32;
+            for (i, (kind, val)) in uninstall_steps.iter().enumerate() {
+                let pct = ((i as u32 + 1) * 30) / total.max(1);
+                emit(pct);
+                match *kind {
+                    "__cmd__" => {
+                        let _ = run_cmd_logged(&tool, "卸载", "/bin/zsh", &["-c", val], &path);
                     }
-                }
-                "__rm_h__" => {
-                    let expanded = val.replace("~", &home);
-                    if std::path::Path::new(&expanded).exists() {
-                        let ok = remove_dir_silent(&expanded);
-                        append_install_log(&tool, ok, &format!("[卸载] rm '{}'", expanded));
+                    "__rm__" => {
+                        if std::path::Path::new(val).exists() {
+                            let ok = remove_dir_silent(val);
+                            append_install_log(&tool, ok, &format!("[卸载] rm '{}'", val));
+                        }
                     }
-                }
-                "__rm_f__" => {
-                    let expanded = val.replace("~", &home);
-                    if std::path::Path::new(&expanded).exists() {
-                        let ok = std::fs::remove_file(std::path::Path::new(&expanded)).is_ok();
-                        append_install_log(&tool, ok, &format!("[卸载] rm file '{}'", expanded));
+                    "__rm_h__" => {
+                        let expanded = val.replace("~", &home);
+                        if std::path::Path::new(&expanded).exists() {
+                            let ok = remove_dir_silent(&expanded);
+                            append_install_log(&tool, ok, &format!("[卸载] rm '{}'", expanded));
+                        }
                     }
+                    "__rm_f__" => {
+                        let expanded = val.replace("~", &home);
+                        if std::path::Path::new(&expanded).exists() {
+                            let ok = std::fs::remove_file(std::path::Path::new(&expanded)).is_ok();
+                            append_install_log(
+                                &tool,
+                                ok,
+                                &format!("[卸载] rm file '{}'", expanded),
+                            );
+                        }
+                    }
+                    _ => {}
                 }
-                _ => {}
             }
-        }
-
         } // end if uninstall_first
 
         // ── 安装阶段 (30% → 100%) ────────────────────────────────────────
@@ -1201,7 +1460,14 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                 } else {
                     // 方案2：直接下载 DMG（比 brew 快，从微软 CDN 下载）
                     emit(55);
-                    append_install_log(&tool, false, &format!("[方案1] 失败: {}，[方案2] 直接下载DMG", error_reason(&stderr1)));
+                    append_install_log(
+                        &tool,
+                        false,
+                        &format!(
+                            "[方案1] 失败: {}，[方案2] 直接下载DMG",
+                            error_reason(&stderr1)
+                        ),
+                    );
                     let (ok2, _, stderr2) = run_install_cmd(&tool, "安装",
                         "curl -L -o /tmp/vscode_install.zip 'https://update.code.visualstudio.com/latest/darwin-universal/stable' 2>&1 && unzip -o /tmp/vscode_install.zip -d /tmp/vscode_install_app 2>&1 && cp -R '/tmp/vscode_install_app/Visual Studio Code.app' /Applications/ 2>&1 && rm -rf /tmp/vscode_install.zip /tmp/vscode_install_app", &path);
                     if ok2 {
@@ -1211,7 +1477,14 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                     } else {
                         // 方案3：brew reset 后重试（兜底，可能较慢）
                         emit(80);
-                        append_install_log(&tool, false, &format!("[方案2] 失败: {}，[方案3] brew reset重试", error_reason(&stderr2)));
+                        append_install_log(
+                            &tool,
+                            false,
+                            &format!(
+                                "[方案2] 失败: {}，[方案3] brew reset重试",
+                                error_reason(&stderr2)
+                            ),
+                        );
                         let (ok3, _, stderr3) = run_install_cmd(&tool, "安装",
                             "brew update-reset 2>&1 && brew update 2>&1 && brew reinstall --cask visual-studio-code 2>&1", &path);
                         if ok3 {
@@ -1237,21 +1510,43 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                 };
                 let (ok, _, stderr) = run_install_cmd(&tool, "安装", install_cmd, &path);
                 emit(100);
-                let msg = if ok { "安装成功".to_string() } else { format!("安装失败: {}", error_reason(&stderr)) };
+                let msg = if ok {
+                    "安装成功".to_string()
+                } else {
+                    format!("安装失败: {}", error_reason(&stderr))
+                };
                 append_install_log(&tool, ok, &msg);
                 (ok, msg)
             }
             "python" => {
-                let (ok, _, stderr) = run_install_cmd(&tool, "安装", "HOMEBREW_NO_AUTO_UPDATE=1 brew install python@3.12", &path);
+                let (ok, _, stderr) = run_install_cmd(
+                    &tool,
+                    "安装",
+                    "HOMEBREW_NO_AUTO_UPDATE=1 brew install python@3.12",
+                    &path,
+                );
                 emit(100);
-                let msg = if ok { "安装成功".to_string() } else { format!("安装失败: {}", error_reason(&stderr)) };
+                let msg = if ok {
+                    "安装成功".to_string()
+                } else {
+                    format!("安装失败: {}", error_reason(&stderr))
+                };
                 append_install_log(&tool, ok, &msg);
                 (ok, msg)
             }
             "git" => {
-                let (ok, _, stderr) = run_install_cmd(&tool, "安装", "HOMEBREW_NO_AUTO_UPDATE=1 brew install git", &path);
+                let (ok, _, stderr) = run_install_cmd(
+                    &tool,
+                    "安装",
+                    "HOMEBREW_NO_AUTO_UPDATE=1 brew install git",
+                    &path,
+                );
                 emit(100);
-                let msg = if ok { "安装成功".to_string() } else { format!("安装失败: {}", error_reason(&stderr)) };
+                let msg = if ok {
+                    "安装成功".to_string()
+                } else {
+                    format!("安装失败: {}", error_reason(&stderr))
+                };
                 append_install_log(&tool, ok, &msg);
                 (ok, msg)
             }
@@ -1259,7 +1554,11 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                 let (ok, _, stderr) = run_install_cmd(&tool, "安装",
                     "HOMEBREW_NO_AUTO_UPDATE=1 brew reinstall --cask google-chrome 2>&1 || HOMEBREW_NO_AUTO_UPDATE=1 brew install --cask google-chrome 2>&1", &path);
                 emit(100);
-                let msg = if ok { "安装成功".to_string() } else { format!("安装失败: {}", error_reason(&stderr)) };
+                let msg = if ok {
+                    "安装成功".to_string()
+                } else {
+                    format!("安装失败: {}", error_reason(&stderr))
+                };
                 append_install_log(&tool, ok, &msg);
                 (ok, msg)
             }
@@ -1267,7 +1566,13 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                 // 方案1：默认 registry
                 emit(30);
                 append_install_log(&tool, true, "[方案1] npm install (默认)");
-                let (ok1, _, stderr1) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "npm install -g @anthropic-ai/claude-code"], &path);
+                let (ok1, _, stderr1) = run_cmd_logged(
+                    &tool,
+                    "安装",
+                    "/bin/zsh",
+                    &["-c", "npm install -g @anthropic-ai/claude-code"],
+                    &path,
+                );
                 if ok1 {
                     emit(100);
                     append_install_log(&tool, true, "[方案1] 安装成功");
@@ -1275,7 +1580,14 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                 } else {
                     // 方案2：npm 官方源
                     emit(48);
-                    append_install_log(&tool, false, &format!("[方案1] 失败: {}，[方案2] npm官方源", error_reason(&stderr1)));
+                    append_install_log(
+                        &tool,
+                        false,
+                        &format!(
+                            "[方案1] 失败: {}，[方案2] npm官方源",
+                            error_reason(&stderr1)
+                        ),
+                    );
                     let (ok2, _, stderr2) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "npm install -g @anthropic-ai/claude-code --registry https://registry.npmjs.org"], &path);
                     if ok2 {
                         emit(100);
@@ -1284,7 +1596,14 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                     } else {
                         // 方案3：清除 npm 客户端证书配置（npmrc 中 cafile/cert/key 指向无效文件时会导致 UNABLE_TO_GET_ISSUER_CERT_LOCALLY）
                         emit(66);
-                        append_install_log(&tool, false, &format!("[方案2] 失败: {}，[方案3] 清除npm cert配置", error_reason(&stderr2)));
+                        append_install_log(
+                            &tool,
+                            false,
+                            &format!(
+                                "[方案2] 失败: {}，[方案3] 清除npm cert配置",
+                                error_reason(&stderr2)
+                            ),
+                        );
                         let (ok3, _, stderr3) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "npm config delete cafile 2>/dev/null; npm config delete cert 2>/dev/null; npm config delete key 2>/dev/null; npm config set strict-ssl false 2>/dev/null; npm install -g @anthropic-ai/claude-code --registry https://registry.npmjs.org"], &path);
                         if ok3 {
                             emit(100);
@@ -1293,7 +1612,14 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
                         } else {
                             // 方案4：终极兜底 — 跳过SSL校验 + 清除配置
                             emit(84);
-                            append_install_log(&tool, false, &format!("[方案3] 失败: {}，[方案4] 跳过SSL+清除配置", error_reason(&stderr3)));
+                            append_install_log(
+                                &tool,
+                                false,
+                                &format!(
+                                    "[方案3] 失败: {}，[方案4] 跳过SSL+清除配置",
+                                    error_reason(&stderr3)
+                                ),
+                            );
                             let (ok4, _, stderr4) = run_cmd_logged(&tool, "安装", "/bin/zsh", &["-c", "npm config delete cafile 2>/dev/null; npm config delete cert 2>/dev/null; npm config delete key 2>/dev/null; npm config set strict-ssl false 2>/dev/null; NODE_TLS_REJECT_UNAUTHORIZED=0 npm install -g @anthropic-ai/claude-code --registry https://registry.npmjs.org"], &path);
                             if ok4 {
                                 emit(100);
@@ -1316,9 +1642,12 @@ fn install_tool_inner(tool: String, uninstall_first: bool, window: tauri::Window
             invalidate_shell_path_cache();
         }
 
-        let _ = window.emit("install_progress", serde_json::json!({
-            "tool": &tool, "progress": 100, "done": true
-        }));
+        let _ = window.emit(
+            "install_progress",
+            serde_json::json!({
+                "tool": &tool, "progress": 100, "done": true
+            }),
+        );
 
         (success, msg)
     }
@@ -1340,11 +1669,18 @@ fn run_install_cmd(tool: &str, label: &str, cmd: &str, path: &str) -> (bool, Str
 
     if cmd.contains("brew") {
         for attempt in 0..3 {
-            let (ok, stdout, stderr) = run_cmd_logged(tool, label, "/bin/zsh", &["-c", &final_cmd], path);
-            if ok { return (ok, stdout, stderr); }
+            let (ok, stdout, stderr) =
+                run_cmd_logged(tool, label, "/bin/zsh", &["-c", &final_cmd], path);
+            if ok {
+                return (ok, stdout, stderr);
+            }
             if stderr.contains("already locked") && attempt < 2 {
                 log::info!("[install] brew 被锁定，5秒后重试 ({}/3)", attempt + 1);
-                append_install_log(tool, true, &format!("[{}] brew 被锁定，{}秒后重试", label, (attempt + 1) * 5));
+                append_install_log(
+                    tool,
+                    true,
+                    &format!("[{}] brew 被锁定，{}秒后重试", label, (attempt + 1) * 5),
+                );
                 std::thread::sleep(std::time::Duration::from_secs(5));
             } else {
                 return (ok, stdout, stderr);
@@ -1398,11 +1734,17 @@ fn cleanup_old_logs() {
                     // 按文件名日期清理：install-2026-05-22.log
                     if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
                         if let Some(date_str) = stem.strip_prefix("install-") {
-                            if let Ok(file_date) = chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d") {
+                            if let Ok(file_date) =
+                                chrono::NaiveDate::parse_from_str(date_str, "%Y-%m-%d")
+                            {
                                 if let Some(file_dt) = file_date.and_hms_opt(23, 59, 59) {
                                     use chrono::TimeZone;
-                                    if let Some(file_local) = chrono::Local.from_local_datetime(&file_dt).single() {
-                                        if now.signed_duration_since(file_local).num_days() > LOG_RETENTION_DAYS {
+                                    if let Some(file_local) =
+                                        chrono::Local.from_local_datetime(&file_dt).single()
+                                    {
+                                        if now.signed_duration_since(file_local).num_days()
+                                            > LOG_RETENTION_DAYS
+                                        {
                                             should_delete = true;
                                         }
                                     }
@@ -1414,7 +1756,9 @@ fn cleanup_old_logs() {
                     if !should_delete {
                         if let Ok(meta) = std::fs::metadata(&path) {
                             if let Ok(modified) = meta.modified() {
-                                let age = std::time::SystemTime::now().duration_since(modified).unwrap_or_default();
+                                let age = std::time::SystemTime::now()
+                                    .duration_since(modified)
+                                    .unwrap_or_default();
                                 if age.as_secs() > (LOG_RETENTION_DAYS * 86400) as u64 {
                                     should_delete = true;
                                 }
@@ -1448,7 +1792,11 @@ pub fn write_install_log(tool: &str, success: bool, msg: &str) {
     let now = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
     let status = if success { "成功" } else { "失败" };
     let line = format!("[{}] {} - {} {}\n", now, tool, status, msg);
-    if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&path) {
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(&path)
+    {
         let _ = f.write_all(line.as_bytes());
     }
 }
@@ -1530,7 +1878,9 @@ pub async fn get_logs_content() -> Result<String, String> {
 #[cfg(target_os = "windows")]
 #[tauri::command]
 pub async fn debug_env() -> String {
-    tauri::async_runtime::spawn_blocking(|| debug_env_inner()).await.unwrap_or_default()
+    tauri::async_runtime::spawn_blocking(|| debug_env_inner())
+        .await
+        .unwrap_or_default()
 }
 
 #[cfg(target_os = "windows")]
@@ -1559,47 +1909,159 @@ fn debug_env_inner() -> String {
 
     // node
     log_line("--- node ---", "");
-    match { let mut c = Command::new("cmd"); c.creation_flags(0x08000000); c }.args(["/C", "node", "--version"]).env("PATH", &shell_path).output() {
-        Ok(o) => log_line("cmd /C node --version", &format!("exit={:?} stdout=[{}] stderr=[{}]", o.status.code(), String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim())),
+    match {
+        let mut c = Command::new("cmd");
+        c.creation_flags(0x08000000);
+        c
+    }
+    .args(["/C", "node", "--version"])
+    .env("PATH", &shell_path)
+    .output()
+    {
+        Ok(o) => log_line(
+            "cmd /C node --version",
+            &format!(
+                "exit={:?} stdout=[{}] stderr=[{}]",
+                o.status.code(),
+                String::from_utf8_lossy(&o.stdout).trim(),
+                String::from_utf8_lossy(&o.stderr).trim()
+            ),
+        ),
         Err(e) => log_line("cmd /C node --version", &format!("错误: {}", e)),
     }
 
     // npm
     log_line("--- npm ---", "");
-    match { let mut c = Command::new("cmd"); c.creation_flags(0x08000000); c }.args(["/C", "npm", "--version"]).env("PATH", &shell_path).output() {
-        Ok(o) => log_line("cmd /C npm --version", &format!("exit={:?} stdout=[{}] stderr=[{}]", o.status.code(), String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim())),
+    match {
+        let mut c = Command::new("cmd");
+        c.creation_flags(0x08000000);
+        c
+    }
+    .args(["/C", "npm", "--version"])
+    .env("PATH", &shell_path)
+    .output()
+    {
+        Ok(o) => log_line(
+            "cmd /C npm --version",
+            &format!(
+                "exit={:?} stdout=[{}] stderr=[{}]",
+                o.status.code(),
+                String::from_utf8_lossy(&o.stdout).trim(),
+                String::from_utf8_lossy(&o.stderr).trim()
+            ),
+        ),
         Err(e) => log_line("cmd /C npm --version", &format!("错误: {}", e)),
     }
 
     // code
     log_line("--- code ---", "");
-    match { let mut c = Command::new("cmd"); c.creation_flags(0x08000000); c }.args(["/C", "code", "--version"]).env("PATH", &shell_path).output() {
-        Ok(o) => log_line("cmd /C code --version", &format!("exit={:?} stdout=[{}] stderr=[{}]", o.status.code(), String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim())),
+    match {
+        let mut c = Command::new("cmd");
+        c.creation_flags(0x08000000);
+        c
+    }
+    .args(["/C", "code", "--version"])
+    .env("PATH", &shell_path)
+    .output()
+    {
+        Ok(o) => log_line(
+            "cmd /C code --version",
+            &format!(
+                "exit={:?} stdout=[{}] stderr=[{}]",
+                o.status.code(),
+                String::from_utf8_lossy(&o.stdout).trim(),
+                String::from_utf8_lossy(&o.stderr).trim()
+            ),
+        ),
         Err(e) => log_line("cmd /C code --version", &format!("错误: {}", e)),
     }
 
     // git
     log_line("--- git ---", "");
-    match { let mut c = Command::new("cmd"); c.creation_flags(0x08000000); c }.args(["/C", "git", "--version"]).env("PATH", &shell_path).output() {
-        Ok(o) => log_line("cmd /C git --version", &format!("exit={:?} stdout=[{}] stderr=[{}]", o.status.code(), String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim())),
+    match {
+        let mut c = Command::new("cmd");
+        c.creation_flags(0x08000000);
+        c
+    }
+    .args(["/C", "git", "--version"])
+    .env("PATH", &shell_path)
+    .output()
+    {
+        Ok(o) => log_line(
+            "cmd /C git --version",
+            &format!(
+                "exit={:?} stdout=[{}] stderr=[{}]",
+                o.status.code(),
+                String::from_utf8_lossy(&o.stdout).trim(),
+                String::from_utf8_lossy(&o.stderr).trim()
+            ),
+        ),
         Err(e) => log_line("cmd /C git --version", &format!("错误: {}", e)),
     }
 
     // python
     log_line("--- python ---", "");
-    match { let mut c = Command::new("cmd"); c.creation_flags(0x08000000); c }.args(["/C", "python", "--version"]).env("PATH", &shell_path).output() {
-        Ok(o) => log_line("cmd /C python --version", &format!("exit={:?} stdout=[{}] stderr=[{}]", o.status.code(), String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim())),
+    match {
+        let mut c = Command::new("cmd");
+        c.creation_flags(0x08000000);
+        c
+    }
+    .args(["/C", "python", "--version"])
+    .env("PATH", &shell_path)
+    .output()
+    {
+        Ok(o) => log_line(
+            "cmd /C python --version",
+            &format!(
+                "exit={:?} stdout=[{}] stderr=[{}]",
+                o.status.code(),
+                String::from_utf8_lossy(&o.stdout).trim(),
+                String::from_utf8_lossy(&o.stderr).trim()
+            ),
+        ),
         Err(e) => log_line("cmd /C python --version", &format!("错误: {}", e)),
     }
-    match { let mut c = Command::new("cmd"); c.creation_flags(0x08000000); c }.args(["/C", "py", "--version"]).env("PATH", &shell_path).output() {
-        Ok(o) => log_line("cmd /C py --version", &format!("exit={:?} stdout=[{}] stderr=[{}]", o.status.code(), String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim())),
+    match {
+        let mut c = Command::new("cmd");
+        c.creation_flags(0x08000000);
+        c
+    }
+    .args(["/C", "py", "--version"])
+    .env("PATH", &shell_path)
+    .output()
+    {
+        Ok(o) => log_line(
+            "cmd /C py --version",
+            &format!(
+                "exit={:?} stdout=[{}] stderr=[{}]",
+                o.status.code(),
+                String::from_utf8_lossy(&o.stdout).trim(),
+                String::from_utf8_lossy(&o.stderr).trim()
+            ),
+        ),
         Err(e) => log_line("cmd /C py --version", &format!("错误: {}", e)),
     }
 
     // claude
     log_line("--- claude ---", "");
-    match { let mut c = Command::new("cmd"); c.creation_flags(0x08000000); c }.args(["/C", "claude", "--version"]).env("PATH", &shell_path).output() {
-        Ok(o) => log_line("cmd /C claude --version", &format!("exit={:?} stdout=[{}] stderr=[{}]", o.status.code(), String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim())),
+    match {
+        let mut c = Command::new("cmd");
+        c.creation_flags(0x08000000);
+        c
+    }
+    .args(["/C", "claude", "--version"])
+    .env("PATH", &shell_path)
+    .output()
+    {
+        Ok(o) => log_line(
+            "cmd /C claude --version",
+            &format!(
+                "exit={:?} stdout=[{}] stderr=[{}]",
+                o.status.code(),
+                String::from_utf8_lossy(&o.stdout).trim(),
+                String::from_utf8_lossy(&o.stderr).trim()
+            ),
+        ),
         Err(e) => log_line("cmd /C claude --version", &format!("错误: {}", e)),
     }
 
@@ -1613,7 +2075,10 @@ fn debug_env_inner() -> String {
         let beacon_paths = [
             (HKEY_CURRENT_USER, r"SOFTWARE\Google\Chrome\BLBeacon"),
             (HKEY_LOCAL_MACHINE, r"SOFTWARE\Google\Chrome\BLBeacon"),
-            (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Google\Chrome\BLBeacon"),
+            (
+                HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\WOW6432Node\Google\Chrome\BLBeacon",
+            ),
         ];
         for (hive, path) in &beacon_paths {
             match RegKey::predef(*hive).open_subkey_with_flags(path, KEY_READ) {
@@ -1627,20 +2092,45 @@ fn debug_env_inner() -> String {
 
         // App Paths exe 路径
         let app_paths = [
-            (HKEY_LOCAL_MACHINE, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"),
-            (HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"),
-            (HKEY_CURRENT_USER, r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe"),
+            (
+                HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+            ),
+            (
+                HKEY_LOCAL_MACHINE,
+                r"SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+            ),
+            (
+                HKEY_CURRENT_USER,
+                r"SOFTWARE\Microsoft\Windows\CurrentVersion\App Paths\chrome.exe",
+            ),
         ];
         for (hive, path) in &app_paths {
             match RegKey::predef(*hive).open_subkey_with_flags(path, KEY_READ) {
                 Ok(key) => match key.get_value::<String, _>("") {
                     Ok(exe) => {
                         log_line("App Paths exe", &format!("{} => {}", path, exe));
-                        match { let mut c = Command::new(&exe); c.creation_flags(0x08000000); c }.arg("--version").env("PATH", &shell_path).output() {
-                            Ok(o) => log_line("chrome --version", &format!("exit={:?} stdout=[{}] stderr=[{}]", o.status.code(), String::from_utf8_lossy(&o.stdout).trim(), String::from_utf8_lossy(&o.stderr).trim())),
+                        match {
+                            let mut c = Command::new(&exe);
+                            c.creation_flags(0x08000000);
+                            c
+                        }
+                        .arg("--version")
+                        .env("PATH", &shell_path)
+                        .output()
+                        {
+                            Ok(o) => log_line(
+                                "chrome --version",
+                                &format!(
+                                    "exit={:?} stdout=[{}] stderr=[{}]",
+                                    o.status.code(),
+                                    String::from_utf8_lossy(&o.stdout).trim(),
+                                    String::from_utf8_lossy(&o.stderr).trim()
+                                ),
+                            ),
                             Err(e) => log_line("chrome --version", &format!("错误: {}", e)),
                         }
-                    },
+                    }
                     Err(e) => log_line("App Paths exe", &format!("{} => 读取失败: {}", path, e)),
                 },
                 Err(e) => log_line("App Paths key", &format!("{} => 打开失败: {}", path, e)),
@@ -1656,7 +2146,9 @@ fn debug_env_inner() -> String {
 #[cfg(not(target_os = "windows"))]
 #[tauri::command]
 pub async fn debug_env() -> String {
-    tauri::async_runtime::spawn_blocking(|| debug_env_inner()).await.unwrap_or_default()
+    tauri::async_runtime::spawn_blocking(|| debug_env_inner())
+        .await
+        .unwrap_or_default()
 }
 
 #[cfg(not(target_os = "windows"))]
@@ -1704,7 +2196,11 @@ fn debug_env_inner() -> String {
         ("py", "py", vec!["--version"]),
         ("claude", "claude", vec!["--version"]),
     ] {
-        match Command::new(cmd).args(&args).env("PATH", &shell_path).output() {
+        match Command::new(cmd)
+            .args(&args)
+            .env("PATH", &shell_path)
+            .output()
+        {
             Ok(o) => log_line(
                 &format!("{} --version", name),
                 &format!(

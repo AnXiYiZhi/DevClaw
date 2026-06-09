@@ -190,13 +190,8 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
   );
   const [showInstallCommands, setShowInstallCommands] = useState(false);
 
-  const {
-    hasUpdate,
-    updateInfo,
-    updateHandle,
-    checkUpdate,
-    isChecking,
-  } = useUpdate();
+  const { hasUpdate, updateInfo, updateHandle, checkUpdate, isChecking } =
+    useUpdate();
 
   const [isDownloading, setIsDownloading] = useState(false);
   const [downloadProgress, setDownloadProgress] = useState(0);
@@ -381,7 +376,9 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
             setDownloadProgress(e.downloaded ?? 0);
           } else if (e.event === "Finished") {
             setReadyToRestart(true);
-            toast.success(t("settings.updateReadyToRestart"), { closeButton: true });
+            toast.success(t("settings.updateReadyToRestart"), {
+              closeButton: true,
+            });
           }
         });
       } catch (error) {
@@ -743,9 +740,7 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           <div className="space-y-2">
             <div className="flex items-center gap-2">
               <img src={appIcon} alt="DevClaw" className="h-5 w-5" />
-              <h4 className="text-lg font-semibold text-foreground">
-                DevClaw
-              </h4>
+              <h4 className="text-lg font-semibold text-foreground">DevClaw</h4>
             </div>
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="gap-1.5 bg-background/80">
@@ -778,13 +773,15 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
               <Globe className="h-3.5 w-3.5" />
               {t("settings.officialWebsite")}
             </Button>
-{readyToRestart ? (
+            {readyToRestart ? (
               <Button
                 type="button"
                 size="sm"
                 onClick={async () => {
                   try {
-                    const { relaunch } = await import("@tauri-apps/plugin-process");
+                    const { relaunch } = await import(
+                      "@tauri-apps/plugin-process"
+                    );
                     await relaunch();
                   } catch {
                     // fallback
@@ -1179,7 +1176,11 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           DevClaw is based on{" "}
           <button
             type="button"
-            onClick={() => settingsApi.openExternal("https://github.com/farion1231/cc-switch")}
+            onClick={() =>
+              settingsApi.openExternal(
+                "https://github.com/farion1231/cc-switch",
+              )
+            }
             className="text-primary underline underline-offset-2 hover:text-primary/80"
           >
             CC Switch
@@ -1187,11 +1188,16 @@ export function AboutSection({ isPortable }: AboutSectionProps) {
           by Jason Young, licensed under the{" "}
           <button
             type="button"
-            onClick={() => settingsApi.openExternal("https://github.com/AnXiYiZhi/DevCLaw/blob/main/LICENSE")}
+            onClick={() =>
+              settingsApi.openExternal(
+                "https://github.com/AnXiYiZhi/DevCLaw/blob/main/LICENSE",
+              )
+            }
             className="text-primary underline underline-offset-2 hover:text-primary/80"
           >
             MIT License
-          </button>.
+          </button>
+          .
         </p>
       </motion.div>
     </motion.section>

@@ -65,7 +65,10 @@ export function useAutoCompact(
           if (checkTimeoutRef.current) clearTimeout(checkTimeoutRef.current);
           checkTimeoutRef.current = setTimeout(() => {
             const recheckChild = el.firstElementChild as HTMLElement | null;
-            if (recheckChild && recheckChild.scrollWidth > boundary.clientWidth + 1) {
+            if (
+              recheckChild &&
+              recheckChild.scrollWidth > boundary.clientWidth + 1
+            ) {
               normalWidthRef.current = recheckChild.scrollWidth;
               setCompact(true);
             }

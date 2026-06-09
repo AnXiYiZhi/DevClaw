@@ -209,10 +209,13 @@ pub async fn verify_license(app: tauri::AppHandle, license: String) -> VerifyRes
     };
 
     if result.success {
-        save_license(&app, &StoredLicense {
-            key,
-            expire_ts: None,
-        });
+        save_license(
+            &app,
+            &StoredLicense {
+                key,
+                expire_ts: None,
+            },
+        );
         VerifyResult {
             ok: true,
             error: None,
