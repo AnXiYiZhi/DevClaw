@@ -982,22 +982,12 @@ fn build_codex_proxy_error_response(
     let status = axum::http::StatusCode::from_u16(map_proxy_error_to_status(error))
         .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
     let body = codex_proxy_error_json(&ctx.provider.name, &ctx.request_model, endpoint, error);
-    let body = serde_json::to_vec(&body).map_err(|e| {
-        log::error!("[Codex] Failed to serialize proxy error response: {e}");
-        ProxyError::Internal(format!("Failed to serialize proxy error: {e}"))
-    })?;
-
-    axum::response::Response::builder()
-        .status(status)
-        .header(
-            axum::http::header::CONTENT_TYPE,
-            axum::http::HeaderValue::from_static("application/json"),
-        )
-        .body(axum::body::Body::from(body))
-        .map_err(|e| {
-            log::error!("[Codex] Failed to build proxy error response: {e}");
-            ProxyError::Internal(format!("Failed to build proxy error response: {e}"))
-        })
+    let mut response = (status, Json(body)).into_response();
+    response.headers_mut().insert(
+        axum::http::header::CACHE_CONTROL,
+        axum::http::HeaderValue::from_static("no-store"),
+    );
+    Ok(response)
 }
 
 fn codex_proxy_error_json(

@@ -9,6 +9,7 @@ import {
   Loader2,
   Zap,
   Power,
+  TriangleAlert,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
@@ -383,6 +384,25 @@ export function ProxyPanel({
                   </p>
                 )}
               </div>
+
+              {status.last_error && (
+                <div className="flex items-start gap-2 border-t border-border pt-3 text-xs text-destructive">
+                  <TriangleAlert className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                  <div className="min-w-0 space-y-1">
+                    <p className="font-medium">
+                      {t("proxy.panel.lastError", {
+                        defaultValue: "最近错误",
+                      })}
+                    </p>
+                    <p
+                      className="break-all whitespace-pre-wrap text-muted-foreground"
+                      title={status.last_error}
+                    >
+                      {status.last_error}
+                    </p>
+                  </div>
+                </div>
+              )}
 
               {/* [5] Logging toggle */}
               <div className="pt-3 border-t border-border">

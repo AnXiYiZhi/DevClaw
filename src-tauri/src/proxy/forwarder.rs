@@ -2291,13 +2291,29 @@ fn should_force_identity_encoding(
 }
 
 fn map_reqwest_send_error(error: reqwest::Error) -> ProxyError {
+    let detail = format_error_chain(&error);
     if error.is_timeout() {
-        ProxyError::Timeout(format!("请求超时: {error}"))
+        ProxyError::Timeout(format!("请求超时: {detail}"))
     } else if error.is_connect() {
-        ProxyError::ForwardFailed(format!("连接失败: {error}"))
+        ProxyError::ForwardFailed(format!("连接失败: {detail}"))
     } else {
-        ProxyError::ForwardFailed(error.to_string())
+        ProxyError::ForwardFailed(detail)
     }
+}
+
+fn format_error_chain(error: &(dyn std::error::Error + 'static)) -> String {
+    let mut messages = vec![error.to_string()];
+    let mut source = error.source();
+
+    while let Some(cause) = source {
+        let message = cause.to_string();
+        if !message.is_empty() && messages.last() != Some(&message) {
+            messages.push(message);
+        }
+        source = cause.source();
+    }
+
+    messages.join("; caused by: ")
 }
 
 fn summarize_text_for_log(text: &str, max_chars: usize) -> String {
@@ -2428,6 +2444,46 @@ mod tests {
             streaming_first_byte_timeout,
             max_attempts: 1,
         }
+    }
+
+    #[test]
+    fn format_error_chain_includes_nested_network_cause() {
+        #[derive(Debug)]
+        struct NestedError;
+
+        impl std::fmt::Display for NestedError {
+            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("target actively refused the connection")
+            }
+        }
+
+        impl std::error::Error for NestedError {}
+
+        #[derive(Debug)]
+        struct RequestError {
+            source: NestedError,
+        }
+
+        impl std::fmt::Display for RequestError {
+            fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                formatter.write_str("error sending request")
+            }
+        }
+
+        impl std::error::Error for RequestError {
+            fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+                Some(&self.source)
+            }
+        }
+
+        let error = RequestError {
+            source: NestedError,
+        };
+
+        let detail = format_error_chain(&error);
+
+        assert!(detail.contains("target actively refused the connection"));
+        assert!(detail.contains("caused by"));
     }
 
     #[test]
