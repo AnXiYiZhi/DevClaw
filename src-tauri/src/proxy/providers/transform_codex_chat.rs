@@ -283,7 +283,7 @@ pub fn responses_to_chat_completions_with_reasoning(
 
     let model = body.get("model").and_then(|v| v.as_str()).unwrap_or("");
     if let Some(max_tokens) = body.get("max_output_tokens") {
-        if super::transform::is_openai_o_series(model) {
+        if uses_max_completion_tokens(model) {
             result["max_completion_tokens"] = max_tokens.clone();
         } else {
             result["max_tokens"] = max_tokens.clone();
@@ -353,6 +353,10 @@ pub fn responses_to_chat_completions_with_reasoning(
     }
 
     Ok(result)
+}
+
+fn uses_max_completion_tokens(model: &str) -> bool {
+    super::transform::is_openai_o_series(model) || model.to_ascii_lowercase().contains("mimo")
 }
 
 fn apply_reasoning_options(
@@ -1960,6 +1964,20 @@ mod tests {
         assert_eq!(result["tool_choice"]["function"]["name"], "get_weather");
         assert_eq!(result["max_tokens"], 100);
         assert_eq!(result["reasoning_effort"], "high");
+    }
+
+    #[test]
+    fn responses_request_maps_mimo_output_limit_to_max_completion_tokens() {
+        let input = json!({
+            "model": "mimo-v2.5-pro",
+            "input": "hello",
+            "max_output_tokens": 2048
+        });
+
+        let result = responses_to_chat_completions(input).unwrap();
+
+        assert_eq!(result["max_completion_tokens"], 2048);
+        assert!(result.get("max_tokens").is_none());
     }
 
     #[test]

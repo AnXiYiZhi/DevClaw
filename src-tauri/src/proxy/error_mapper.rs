@@ -15,11 +15,14 @@ use super::ProxyError;
 /// - 其他错误：500 Internal Server Error
 pub fn map_proxy_error_to_status(error: &ProxyError) -> u16 {
     match error {
+        ProxyError::AlreadyRunning => 409,
+        ProxyError::NotRunning => 503,
+
         // 上游错误：使用实际状态码
         ProxyError::UpstreamError { status, .. } => *status,
 
         // 超时错误：504 Gateway Timeout
-        ProxyError::Timeout(_) => 504,
+        ProxyError::Timeout(_) | ProxyError::StreamIdleTimeout(_) => 504,
 
         // 转发失败/连接失败：502 Bad Gateway
         ProxyError::ForwardFailed(_) => 502,
@@ -39,11 +42,17 @@ pub fn map_proxy_error_to_status(error: &ProxyError) -> u16 {
         // Provider 不健康：503 Service Unavailable
         ProxyError::ProviderUnhealthy(_) => 503,
 
+        // 配置错误/无效请求：400 Bad Request
+        ProxyError::ConfigError(_) | ProxyError::InvalidRequest(_) => 400,
+
+        // 认证错误：401 Unauthorized
+        ProxyError::AuthError(_) => 401,
+
         // 数据库错误：500 Internal Server Error
         ProxyError::DatabaseError(_) => 500,
 
-        // 转换错误：500 Internal Server Error
-        ProxyError::TransformError(_) => 500,
+        // 转换错误：422 Unprocessable Entity
+        ProxyError::TransformError(_) => 422,
 
         // 其他未知错误：500 Internal Server Error
         _ => 500,
@@ -102,6 +111,30 @@ mod tests {
     fn test_map_no_provider_error() {
         let error = ProxyError::NoAvailableProvider;
         assert_eq!(map_proxy_error_to_status(&error), 503);
+    }
+
+    #[test]
+    fn test_map_status_matches_proxy_error_response_semantics() {
+        assert_eq!(
+            map_proxy_error_to_status(&ProxyError::AuthError("bad token".to_string())),
+            401
+        );
+        assert_eq!(
+            map_proxy_error_to_status(&ProxyError::ConfigError("bad config".to_string())),
+            400
+        );
+        assert_eq!(
+            map_proxy_error_to_status(&ProxyError::InvalidRequest("bad request".to_string())),
+            400
+        );
+        assert_eq!(
+            map_proxy_error_to_status(&ProxyError::TransformError("bad transform".to_string())),
+            422
+        );
+        assert_eq!(
+            map_proxy_error_to_status(&ProxyError::StreamIdleTimeout(30)),
+            504
+        );
     }
 
     #[test]

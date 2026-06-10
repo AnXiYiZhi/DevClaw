@@ -402,6 +402,13 @@ impl RequestForwarder {
                 status.current_provider = Some(provider.name.clone());
                 status.current_provider_id = Some(provider.id.clone());
             }
+            {
+                let mut current_providers = self.current_providers.write().await;
+                current_providers.insert(
+                    app_type_str.to_string(),
+                    (provider.id.clone(), provider.name.clone()),
+                );
+            }
 
             // 转发请求（每个 Provider 只尝试一次，重试由客户端控制）
             match self

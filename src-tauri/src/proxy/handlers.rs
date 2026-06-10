@@ -557,7 +557,7 @@ pub async fn handle_chat_completions(
                 ctx.provider = provider;
             }
             log_forward_error(&state, &ctx, is_stream, &err.error);
-            return Err(err.error);
+            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
         }
     };
 
@@ -622,7 +622,7 @@ pub async fn handle_responses(
                 ctx.provider = provider;
             }
             log_forward_error(&state, &ctx, is_stream, &err.error);
-            return Err(err.error);
+            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
         }
     };
 
@@ -699,7 +699,7 @@ pub async fn handle_responses_compact(
                 ctx.provider = provider;
             }
             log_forward_error(&state, &ctx, is_stream, &err.error);
-            return Err(err.error);
+            return build_codex_proxy_error_response(&ctx, &endpoint, &err.error);
         }
     };
 
@@ -973,6 +973,174 @@ async fn handle_codex_chat_error_response(
 // Gemini API 处理器
 // ============================================================================
 
+/// Build a Responses-compatible error so Codex can surface the real upstream failure.
+fn build_codex_proxy_error_response(
+    ctx: &RequestContext,
+    endpoint: &str,
+    error: &ProxyError,
+) -> Result<axum::response::Response, ProxyError> {
+    let status = axum::http::StatusCode::from_u16(map_proxy_error_to_status(error))
+        .unwrap_or(axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+    let body = codex_proxy_error_json(&ctx.provider.name, &ctx.request_model, endpoint, error);
+    let body = serde_json::to_vec(&body).map_err(|e| {
+        log::error!("[Codex] Failed to serialize proxy error response: {e}");
+        ProxyError::Internal(format!("Failed to serialize proxy error: {e}"))
+    })?;
+
+    axum::response::Response::builder()
+        .status(status)
+        .header(
+            axum::http::header::CONTENT_TYPE,
+            axum::http::HeaderValue::from_static("application/json"),
+        )
+        .body(axum::body::Body::from(body))
+        .map_err(|e| {
+            log::error!("[Codex] Failed to build proxy error response: {e}");
+            ProxyError::Internal(format!("Failed to build proxy error response: {e}"))
+        })
+}
+
+fn codex_proxy_error_json(
+    provider_name: &str,
+    request_model: &str,
+    endpoint: &str,
+    error: &ProxyError,
+) -> Value {
+    let (mut body, upstream_status) = match error {
+        ProxyError::UpstreamError { status, body } => {
+            let parsed_body = body
+                .as_deref()
+                .map(|body| serde_json::from_str::<Value>(body).unwrap_or_else(|_| json!(body)));
+            (
+                transform_codex_chat::chat_error_to_response_error(parsed_body.as_ref()),
+                Some(*status),
+            )
+        }
+        _ => (
+            json!({
+                "error": {
+                    "message": get_error_message(error),
+                    "type": "proxy_error",
+                    "code": codex_proxy_error_code(error),
+                    "param": Value::Null,
+                }
+            }),
+            None,
+        ),
+    };
+
+    let Some(error_obj) = body.get_mut("error").and_then(Value::as_object_mut) else {
+        return body;
+    };
+
+    let message = if upstream_status == Some(413) {
+        format!(
+            concat!(
+                "Upstream provider rejected the request with HTTP 413 (Payload Too Large). ",
+                "This is the provider's server-side limit, not a DevClaw limit. ",
+                "Provider: {provider}; model: {model}; endpoint: {endpoint}. ",
+                "Run /compact, remove large pasted logs or inline images, or ask the ",
+                "provider to raise its request body limit."
+            ),
+            provider = provider_name,
+            model = request_model,
+            endpoint = endpoint,
+        )
+    } else {
+        let cause = error_obj
+            .get("message")
+            .and_then(Value::as_str)
+            .map(ToString::to_string)
+            .filter(|message| !message.trim().is_empty())
+            .unwrap_or_else(|| get_error_message(error));
+        let status_fragment = upstream_status
+            .map(|status| format!("; upstream_status: HTTP {status}"))
+            .unwrap_or_default();
+        format!(
+            "DevClaw local proxy failed while handling Codex endpoint {endpoint}. Provider: {provider_name}; model: {request_model}{status_fragment}; cause: {cause}"
+        )
+    };
+
+    error_obj.insert(
+        "message".to_string(),
+        Value::String(compact_error_message(&message, 1800)),
+    );
+    if error_obj
+        .get("type")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .map(str::is_empty)
+        .unwrap_or(true)
+    {
+        error_obj.insert("type".to_string(), Value::String("proxy_error".to_string()));
+    }
+    if error_obj.get("code").map(Value::is_null).unwrap_or(true) {
+        error_obj.insert(
+            "code".to_string(),
+            Value::String(codex_proxy_error_code(error).to_string()),
+        );
+    }
+    if !error_obj.contains_key("param") {
+        error_obj.insert("param".to_string(), Value::Null);
+    }
+    error_obj.insert(
+        "provider".to_string(),
+        Value::String(provider_name.to_string()),
+    );
+    error_obj.insert(
+        "model".to_string(),
+        Value::String(request_model.to_string()),
+    );
+    error_obj.insert("endpoint".to_string(), Value::String(endpoint.to_string()));
+    if let Some(status) = upstream_status {
+        error_obj.insert(
+            "upstream_status".to_string(),
+            Value::Number(serde_json::Number::from(status)),
+        );
+    }
+
+    body
+}
+
+fn codex_proxy_error_code(error: &ProxyError) -> &'static str {
+    match error {
+        ProxyError::ForwardFailed(_) => "devclaw_forward_failed",
+        ProxyError::Timeout(_) | ProxyError::StreamIdleTimeout(_) => "devclaw_timeout",
+        ProxyError::NoAvailableProvider => "devclaw_no_available_provider",
+        ProxyError::AllProvidersCircuitOpen => "devclaw_all_providers_circuit_open",
+        ProxyError::NoProvidersConfigured => "devclaw_no_providers_configured",
+        ProxyError::MaxRetriesExceeded => "devclaw_max_retries_exceeded",
+        ProxyError::ProviderUnhealthy(_) => "devclaw_provider_unhealthy",
+        ProxyError::ConfigError(_) => "devclaw_config_error",
+        ProxyError::TransformError(_) => "devclaw_transform_error",
+        ProxyError::InvalidRequest(_) => "devclaw_invalid_request",
+        ProxyError::AuthError(_) => "devclaw_auth_error",
+        ProxyError::UpstreamError { .. } => "devclaw_upstream_error",
+        ProxyError::DatabaseError(_) => "devclaw_database_error",
+        ProxyError::Internal(_) => "devclaw_internal_error",
+        ProxyError::AlreadyRunning
+        | ProxyError::NotRunning
+        | ProxyError::BindFailed(_)
+        | ProxyError::StopTimeout
+        | ProxyError::StopFailed(_) => "devclaw_proxy_error",
+    }
+}
+
+fn compact_error_message(message: &str, max_chars: usize) -> String {
+    let normalized = message.split_whitespace().collect::<Vec<_>>().join(" ");
+    if normalized.chars().count() <= max_chars {
+        return normalized;
+    }
+
+    let truncated = normalized
+        .chars()
+        .take(max_chars)
+        .collect::<String>()
+        .trim_end()
+        .to_string();
+    format!("{truncated}...(truncated)")
+}
+
 /// 处理 Gemini API 请求（透传，包括查询参数）
 pub async fn handle_gemini(
     State(state): State<ProxyState>,
@@ -1219,7 +1387,10 @@ async fn log_usage(
 
 #[cfg(test)]
 mod tests {
-    use super::{responses_sse_to_response_value, should_use_claude_transform_streaming};
+    use super::{
+        codex_proxy_error_json, responses_sse_to_response_value,
+        should_use_claude_transform_streaming,
+    };
     use crate::proxy::ProxyError;
 
     #[test]
@@ -1250,6 +1421,34 @@ mod tests {
             "openai_responses",
             false,
         ));
+    }
+
+    #[test]
+    fn codex_proxy_forward_error_includes_context_and_cause() {
+        let error = ProxyError::ForwardFailed("dns lookup failed".to_string());
+        let body = codex_proxy_error_json("Xiaomi MiMo", "mimo-v2.5-pro", "/responses", &error);
+        let message = body["error"]["message"].as_str().unwrap();
+
+        assert!(message.contains("DevClaw local proxy failed"));
+        assert!(message.contains("Xiaomi MiMo"));
+        assert!(message.contains("mimo-v2.5-pro"));
+        assert!(message.contains("/responses"));
+        assert!(message.contains("dns lookup failed"));
+        assert_eq!(body["error"]["code"], "devclaw_forward_failed");
+    }
+
+    #[test]
+    fn codex_proxy_upstream_error_preserves_status_and_message() {
+        let error = ProxyError::UpstreamError {
+            status: 401,
+            body: Some(r#"{"error":{"message":"invalid api key"}}"#.to_string()),
+        };
+        let body = codex_proxy_error_json("Xiaomi MiMo", "mimo-v2.5-pro", "/responses", &error);
+        let message = body["error"]["message"].as_str().unwrap();
+
+        assert!(message.contains("invalid api key"));
+        assert_eq!(body["error"]["upstream_status"], 401);
+        assert_eq!(body["error"]["provider"], "Xiaomi MiMo");
     }
 
     #[test]
