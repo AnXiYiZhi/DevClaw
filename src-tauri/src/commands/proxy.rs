@@ -7,6 +7,57 @@ use crate::proxy::types::*;
 use crate::proxy::{CircuitBreakerConfig, CircuitBreakerStats};
 use crate::store::AppState;
 
+#[cfg(any(target_os = "windows", test))]
+const LOCAL_NO_PROXY_HOSTS: [&str; 3] = ["127.0.0.1", "localhost", "::1"];
+
+#[cfg(any(target_os = "windows", test))]
+fn merge_local_no_proxy(existing: &str) -> String {
+    let mut entries = existing
+        .split([',', ';'])
+        .map(str::trim)
+        .filter(|entry| !entry.is_empty())
+        .map(ToString::to_string)
+        .collect::<Vec<_>>();
+
+    for host in LOCAL_NO_PROXY_HOSTS {
+        if !entries.iter().any(|entry| entry.eq_ignore_ascii_case(host)) {
+            entries.push(host.to_string());
+        }
+    }
+
+    entries.join(",")
+}
+
+/// Ensure local DevClaw traffic bypasses user-level HTTP proxies on Windows.
+#[tauri::command]
+pub fn repair_local_proxy_bypass() -> Result<String, String> {
+    #[cfg(target_os = "windows")]
+    {
+        use winreg::enums::HKEY_CURRENT_USER;
+        use winreg::RegKey;
+
+        let (environment, _) = RegKey::predef(HKEY_CURRENT_USER)
+            .create_subkey("Environment")
+            .map_err(|e| format!("Failed to open user environment settings: {e}"))?;
+        let existing = environment
+            .get_value::<String, _>("NO_PROXY")
+            .unwrap_or_default();
+        let updated = merge_local_no_proxy(&existing);
+
+        environment
+            .set_value("NO_PROXY", &updated)
+            .map_err(|e| format!("Failed to update NO_PROXY: {e}"))?;
+        std::env::set_var("NO_PROXY", &updated);
+
+        Ok(updated)
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        Err("Local proxy repair is only available on Windows".to_string())
+    }
+}
+
 /// 启动代理服务器（仅启动服务，不接管 Live 配置）
 #[tauri::command]
 pub async fn start_proxy_server(
@@ -432,6 +483,27 @@ pub async fn update_circuit_breaker_config(
         .await?;
 
     Ok(())
+}
+
+#[cfg(test)]
+mod local_proxy_repair_tests {
+    use super::merge_local_no_proxy;
+
+    #[test]
+    fn merge_local_no_proxy_preserves_existing_entries_and_adds_loopback_hosts() {
+        assert_eq!(
+            merge_local_no_proxy("example.com, 10.0.0.0/8"),
+            "example.com,10.0.0.0/8,127.0.0.1,localhost,::1"
+        );
+    }
+
+    #[test]
+    fn merge_local_no_proxy_is_idempotent_and_case_insensitive() {
+        assert_eq!(
+            merge_local_no_proxy("LOCALHOST;127.0.0.1,::1"),
+            "LOCALHOST,127.0.0.1,::1"
+        );
+    }
 }
 
 /// 获取熔断器统计信息（仅当代理服务器运行时）

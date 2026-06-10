@@ -2136,6 +2136,9 @@
     "panel": {
       "serviceAddress": "服務位址",
       "addressCopied": "位址已複製",
+      "repairLocalProxy": "修復本機連線",
+      "localProxyRepairSuccess": "本機連線已修復。請完全結束並重新啟動 Codex 後再試。",
+      "localProxyRepairFailed": "修復失敗：{{detail}}",
       "currentProvider": "目前 Provider：",
       "waitingFirstRequest": "目前 Provider：等待首次請求...",
       "stoppedTitle": "路由服務已停止",

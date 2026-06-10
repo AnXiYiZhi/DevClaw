@@ -1251,6 +1251,7 @@ pub fn run() {
             commands::get_proxy_status,
             commands::get_proxy_config,
             commands::update_proxy_config,
+            commands::repair_local_proxy_bypass,
             // Global & Per-App Config
             commands::get_global_proxy_config,
             commands::update_global_proxy_config,

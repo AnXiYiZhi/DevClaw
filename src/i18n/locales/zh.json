@@ -2193,6 +2193,9 @@
     "panel": {
       "serviceAddress": "服务地址",
       "addressCopied": "地址已复制",
+      "repairLocalProxy": "修复本地连接",
+      "localProxyRepairSuccess": "本地连接已修复。请彻底退出并重新启动 Codex 后再试。",
+      "localProxyRepairFailed": "修复失败：{{detail}}",
       "currentProvider": "当前 Provider：",
       "waitingFirstRequest": "当前 Provider：等待首次请求…",
       "stoppedTitle": "路由服务已停止",

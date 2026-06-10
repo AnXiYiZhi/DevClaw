@@ -10,7 +10,9 @@ import {
   Zap,
   Power,
   TriangleAlert,
+  Wrench,
 } from "lucide-react";
+import { invoke } from "@tauri-apps/api/core";
 import { Button } from "@/components/ui/button";
 import { Switch } from "@/components/ui/switch";
 import { Label } from "@/components/ui/label";
@@ -30,6 +32,7 @@ import {
 import type { ProxyStatus } from "@/types/proxy";
 import { useTranslation } from "react-i18next";
 import { AnimatePresence, motion } from "framer-motion";
+import { isWindows } from "@/lib/platform";
 
 interface ProxyPanelProps {
   enableLocalProxy: boolean;
@@ -58,6 +61,7 @@ export function ProxyPanel({
   // 监听地址/端口的本地状态（端口用字符串以支持完全清空）
   const [listenAddress, setListenAddress] = useState("127.0.0.1");
   const [listenPort, setListenPort] = useState("15721");
+  const [isRepairingLocalProxy, setIsRepairingLocalProxy] = useState(false);
 
   // 同步全局配置到本地状态
   useEffect(() => {
@@ -114,6 +118,29 @@ export function ProxyPanel({
       toast.error(
         t("proxy.logging.failed", { defaultValue: "切换日志状态失败" }),
       );
+    }
+  };
+
+  const handleRepairLocalProxy = async () => {
+    setIsRepairingLocalProxy(true);
+    try {
+      await invoke<string>("repair_local_proxy_bypass");
+      toast.success(
+        t("proxy.panel.localProxyRepairSuccess", {
+          defaultValue: "本地连接已修复。请彻底退出并重新启动 Codex 后再试。",
+        }),
+        { closeButton: true, duration: 8000 },
+      );
+    } catch (error) {
+      toast.error(
+        t("proxy.panel.localProxyRepairFailed", {
+          detail: String(error),
+          defaultValue: "修复失败：{{detail}}",
+        }),
+        { closeButton: true },
+      );
+    } finally {
+      setIsRepairingLocalProxy(false);
     }
   };
 
@@ -336,6 +363,23 @@ export function ProxyPanel({
                   >
                     {t("common.copy")}
                   </Button>
+                  {isWindows() && (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      onClick={handleRepairLocalProxy}
+                      disabled={isRepairingLocalProxy}
+                    >
+                      {isRepairingLocalProxy ? (
+                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                      ) : (
+                        <Wrench className="mr-2 h-4 w-4" />
+                      )}
+                      {t("proxy.panel.repairLocalProxy", {
+                        defaultValue: "修复本地连接",
+                      })}
+                    </Button>
+                  )}
                 </div>
                 <p className="text-xs text-muted-foreground mt-2">
                   {t("proxy.settings.restartRequired", {

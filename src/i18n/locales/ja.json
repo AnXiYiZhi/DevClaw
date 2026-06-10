@@ -2190,6 +2190,9 @@
     "panel": {
       "serviceAddress": "サービスアドレス",
       "addressCopied": "アドレスをコピーしました",
+      "repairLocalProxy": "ローカル接続を修復",
+      "localProxyRepairSuccess": "ローカル接続を修復しました。Codex を完全に終了して再起動してから、もう一度お試しください。",
+      "localProxyRepairFailed": "修復に失敗しました: {{detail}}",
       "currentProvider": "現在のプロバイダー:",
       "waitingFirstRequest": "現在のプロバイダー: 最初のリクエスト待ち...",
       "stoppedTitle": "ルーティングサービス停止中",

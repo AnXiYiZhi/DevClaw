@@ -2190,6 +2190,9 @@
     "panel": {
       "serviceAddress": "Service Address",
       "addressCopied": "Address copied",
+      "repairLocalProxy": "Repair Local Connection",
+      "localProxyRepairSuccess": "Local connection repaired. Fully quit and restart Codex before trying again.",
+      "localProxyRepairFailed": "Repair failed: {{detail}}",
       "currentProvider": "Current Provider:",
       "waitingFirstRequest": "Current Provider: Waiting for first request...",
       "stoppedTitle": "Routing Service Stopped",
